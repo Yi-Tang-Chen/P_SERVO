@@ -1,0 +1,1 @@
+ g++ -o claw_ctrl RS485Comm.cpp main.cpp
