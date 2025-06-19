@@ -1,51 +1,76 @@
-#include "RS485Comm.h"
-#include <iostream>
-#include <thread>
-#include <chrono>
+// main.cpp
+#include "main.h"
 
+// 构造函数：保存引用并记录初始化等待时间
+ClawController::ClawController(RS485Comm& comm, int init_wait_ms)
+  : comm_(comm), init_wait_ms_(init_wait_ms)
+{}
+
+// 初始化伺服
+void ClawController::initializeServo() {
+    if (!comm_.writeRegister(REG_SERVO_ON, 1)) {
+        std::cerr << "[Error] 无法启用伺服\n";
+        return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(init_wait_ms_));
+}
+
+// 发 START
+void ClawController::startServo() {
+    if (!comm_.writeRegister(REG_START, 1)) {
+        std::cerr << "[Error] 无法发送 START\n";
+    }
+}
+
+// 脉冲移动
+void ClawController::moveClaw(uint16_t direction,
+                              uint16_t pulseCount,
+                              uint16_t pulseDen) {
+    comm_.writeRegister(REG_MOVE_DIR,  direction);
+    comm_.writeRegister(REG_MOVE_EN,   1);
+    comm_.writeRegister(REG_PULSE_NUM, pulseCount);
+    comm_.writeRegister(REG_PULSE_DEN, pulseDen);
+    startServo();
+}
+
+// 读状态并打印
+void ClawController::readStatus() {
+    uint16_t status = 0;
+    if (!comm_.readRegister(REG_STATUS, status)) {
+        std::cerr << "[Error] 无法读取状态寄存器\n";
+        return;
+    }
+    bool moving = status & 0x0001;  // bit0 = MOVE
+    bool ready  = status & 0x0002;  // bit1 = READY
+    bool alarm  = status & 0x0004;  // bit2 = ALARM
+
+    std::cout 
+      << "[Status] Moving=" << moving
+      << "  Ready="      << ready
+      << "  Alarm="      << alarm
+      << std::endl;
+}
+
+// 程序入口：示范如何正确调用
 int main() {
-    RS485Comm comm("/dev/ttyS0", 1);     // RS485 裝置與 Modbus ID
+    RS485Comm comm("/dev/ttyS0", 1);
     if (!comm.openPort(19200)) {
-        std::cerr << "Failed to open RS485 port\n";
+        std::cerr << "[Fatal] 无法打开 RS-485 端口\n";
         return -1;
     }
 
-    // 定義常用暫存器位址
-    const uint16_t REG_SERVO_ON    = 0x0600;  // SERVO_ON :contentReference[oaicite:2]{index=2}
-    const uint16_t REG_START       = 0x0602;  // START :contentReference[oaicite:3]{index=3}
-    const uint16_t REG_MOVE_DIR    = 0x0809;  // MoveDir :contentReference[oaicite:4]{index=4}
-    const uint16_t REG_MOVE_EN     = 0x080A;  // MoveSttSet :contentReference[oaicite:5]{index=5}
-    const uint16_t REG_PULSE_NUM   = 0x080B;  // PulseNum :contentReference[oaicite:6]{index=6}
-    const uint16_t REG_PULSE_DEN   = 0x080D;  // PulseDen :contentReference[oaicite:7]{index=7}
+    ClawController claw(comm);
+    claw.initializeServo();
+    claw.readStatus();
 
-    // 1. 啟動 Servo
-    comm.writeRegister(REG_SERVO_ON, 1);
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-
-    // 2. 開啟伺服運轉
-    comm.writeRegister(REG_START, 1);
-
-    // 3. 移動方向與開/關爪預設參數
-    //    direction: 0 = 正轉 (開爪)、1 = 反轉 (關爪)
-    uint16_t open_pulse  = 1000;     // 實際請依機構調整
-    uint16_t close_pulse = 500;      // 實際請依機構調整
-
-    // 範例：先開爪
-    comm.writeRegister(REG_MOVE_DIR, 0);
-    comm.writeRegister(REG_MOVE_EN, 1);
-    comm.writeRegister(REG_PULSE_NUM, open_pulse);
-    comm.writeRegister(REG_PULSE_DEN, 1);
-    comm.writeRegister(REG_START, 1);
-
+    // 开爪
+    claw.moveClaw(0, 1000);
+    claw.readStatus();
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
-    // 範例：再關爪
-    comm.writeRegister(REG_MOVE_DIR, 1);
-    comm.writeRegister(REG_MOVE_EN, 1);
-    comm.writeRegister(REG_PULSE_NUM, close_pulse);
-    comm.writeRegister(REG_PULSE_DEN, 1);
-    comm.writeRegister(REG_START, 1);
+    // 关爪
+    claw.moveClaw(1, 500);
+    claw.readStatus();
 
     comm.closePort();
     return 0;
