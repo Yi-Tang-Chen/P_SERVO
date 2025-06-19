@@ -48,7 +48,7 @@ void ClawController::readStatus() {
 
 // 程序入口
 int main() {
-    RS485Comm comm("COM5", 1); // Windows COM port
+    RS485Comm comm("COM5", 0); // Windows COM port
     if (!comm.openPort(19200)) {
         std::cerr << "[Fatal] Cannot open RS-485 port.\n";
         return -1;
