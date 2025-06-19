@@ -10,37 +10,34 @@
 
 class ClawController {
 public:
-    // 构造：传入已经 openPort() 的 comm，以及初始化等待毫秒数
+    // 構造：傳入已經 openPort() 的 comm，以及初始化等待毫秒數
     ClawController(RS485Comm& comm, int init_wait_ms = 5000);
 
-    // 启动伺服并等待完成（写 REGISTER_SERVO_ON + sleep）
+    // 啟動伺服並等待完成
     void initializeServo();
 
-    // 发一次 START 指令（写 REGISTER_START）
-    void startServo();
+    // 脈衝模式移動爪子：
+    //   direction: 0 = 正向 (開爪)；1 = 反向 (關爪)
+    //   pulseCount: 脈衝數
+    void moveClaw(uint16_t direction, uint16_t pulseCount);
 
-    // 脉冲模式移动爪子：
-    //   direction: 0 = 开爪；1 = 关爪
-    //   pulseCount: 脉冲数；pulseDen: 分频（默认 1）
-    void moveClaw(uint16_t direction,
-                  uint16_t pulseCount,
-                  uint16_t pulseDen = 1);
-
-    // 读 STATUS 寄存器，并在 stdout 输出 MOVE/READY/ALARM
+    // 讀取狀態寄存器
     void readStatus();
 
 private:
     RS485Comm& comm_;
     int        init_wait_ms_;
 
-    // 寄存器地址
-    static constexpr uint16_t REG_SERVO_ON  = 0x0600;
-    static constexpr uint16_t REG_START     = 0x0602;
-    static constexpr uint16_t REG_MOVE_DIR  = 0x0809;
-    static constexpr uint16_t REG_MOVE_EN   = 0x080A;
-    static constexpr uint16_t REG_PULSE_NUM = 0x080B;
-    static constexpr uint16_t REG_PULSE_DEN = 0x080D;
-    static constexpr uint16_t REG_STATUS    = 0x0A0E;  // bit0=MOVE, bit1=READY, bit2=ALARM
+    // --- 正確的位址定義 ---
+    // 動作執行相關 (Action Execution)
+    static constexpr uint16_t REG_ACTION_EXECUTE   = 0x201E; // 寫入不同數值以執行不同動作
+    static constexpr uint16_t REG_ACTION_SERVO_ON  = 0x2011; // 伺服 ON/OFF
+
+    // 資料設定相關 (Data Registers)
+    static constexpr uint16_t REG_RELATIVE_MOVE_PULSES = 0x2000; // 相對移動的脈衝數
+
+    // 狀態讀取相關 (Status Registers)
+    static constexpr uint16_t REG_MOTION_STATUS      = 0x1000; // 讀取動作狀態 (停止/作動中/異常)
 };
 
 #endif // MAIN_H
