@@ -6,11 +6,11 @@
 
 class RS485Comm {
 public:
-    // device: 串口裝置 (e.g. "/dev/ttyS0")；slave_id: Modbus ID
+    // device: 串口裝置 (e.g. "COM1")；slave_id: Modbus ID
     RS485Comm(const std::string& device, uint8_t slave_id);
     ~RS485Comm();
 
-    // 打開串口並設定 8-N-1、RS485 模式，預設 19200bps
+    // 打開串口並設定 8-N-1，預設 19200bps
     bool openPort(int baudrate = 19200);
     void closePort();
 
@@ -20,8 +20,9 @@ public:
     bool readRegister(uint16_t reg_addr, uint16_t& value);
 
 private:
-    int     fd_;
+    void* hComm_; // 在 Windows 中使用 HANDLE
     uint8_t slave_id_;
+    std::string device_name_;
 
     // 計算 CRC-16(Modbus)
     uint16_t calcCRC(const uint8_t* data, size_t len);

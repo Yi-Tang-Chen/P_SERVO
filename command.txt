@@ -1,1 +1,1 @@
-g++ -o claw_ctrl RS485Comm.cpp main.cpp
+cl /EHsc /Feclaw_ctrl.exe RS485Comm.cpp main.cpp

@@ -1,15 +1,10 @@
 #include "RS485Comm.h"
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/serial.h>
-#include <termios.h>
-#include <cstring>
+#include <windows.h> // 使用 Windows API
 #include <iostream>
+#include <cstring>
 
 RS485Comm::RS485Comm(const std::string& device, uint8_t slave_id)
-: fd_(-1), slave_id_(slave_id) {
-    fd_ = ::open(device.c_str(), O_RDWR | O_NOCTTY);
+: hComm_(INVALID_HANDLE_VALUE), slave_id_(slave_id), device_name_(device) {
 }
 
 RS485Comm::~RS485Comm() {
@@ -17,27 +12,62 @@ RS485Comm::~RS485Comm() {
 }
 
 bool RS485Comm::openPort(int baudrate) {
-    if (fd_ < 0) return false;
-    struct termios tio;
-    tcgetattr(fd_, &tio);
-    cfmakeraw(&tio);
-    cfsetispeed(&tio, baudrate);
-    cfsetospeed(&tio, baudrate);
-    tio.c_cflag |= CLOCAL | CREAD | CS8;
-    tio.c_cflag &= ~(PARENB | PARODD | CSTOPB);
-    tcsetattr(fd_, TCSANOW, &tio);
+    // Windows 的串口名稱格式為 "\\\\.\\COMX"
+    std::string full_device_name = "\\\\.\\" + device_name_;
 
-    // RS485 模式
-    struct serial_rs485 rs485conf;
-    memset(&rs485conf, 0, sizeof(rs485conf));
-    rs485conf.flags |= SER_RS485_ENABLED;
-    ioctl(fd_, TIOCSRS485, &rs485conf);
+    // 修正：明確呼叫 CreateFileA 來匹配 const char* 類型的參數
+    // 避免在 Unicode 專案設定下，CreateFile 被宏定義為 CreateFileW，導致類型不匹配的編譯錯誤
+    hComm_ = CreateFileA(full_device_name.c_str(),
+                        GENERIC_READ | GENERIC_WRITE,
+                        0,
+                        NULL,
+                        OPEN_EXISTING,
+                        0,
+                        NULL);
+
+    if (hComm_ == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    DCB dcbSerialParams = {0};
+    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
+
+    if (!GetCommState(hComm_, &dcbSerialParams)) {
+        closePort();
+        return false;
+    }
+
+    dcbSerialParams.BaudRate = baudrate;
+    dcbSerialParams.ByteSize = 8;
+    dcbSerialParams.StopBits = ONESTOPBIT;
+    dcbSerialParams.Parity   = NOPARITY;
+
+    if(!SetCommState(hComm_, &dcbSerialParams)){
+        closePort();
+        return false;
+    }
+    
+    // 設定超時
+    COMMTIMEOUTS timeouts = {0};
+    timeouts.ReadIntervalTimeout         = 50;
+    timeouts.ReadTotalTimeoutConstant    = 50;
+    timeouts.ReadTotalTimeoutMultiplier  = 10;
+    timeouts.WriteTotalTimeoutConstant   = 50;
+    timeouts.WriteTotalTimeoutMultiplier = 10;
+
+    if(!SetCommTimeouts(hComm_, &timeouts)){
+        closePort();
+        return false;
+    }
 
     return true;
 }
 
 void RS485Comm::closePort() {
-    if (fd_ >= 0) ::close(fd_), fd_ = -1;
+    if (hComm_ != INVALID_HANDLE_VALUE) {
+        CloseHandle(hComm_);
+        hComm_ = INVALID_HANDLE_VALUE;
+    }
 }
 
 uint16_t RS485Comm::calcCRC(const uint8_t* data, size_t len) {
@@ -53,19 +83,24 @@ uint16_t RS485Comm::calcCRC(const uint8_t* data, size_t len) {
 }
 
 bool RS485Comm::sendFrame(const uint8_t* frame, size_t len) {
-    return write(fd_, frame, len) == (ssize_t)len;
+    DWORD bytesWritten;
+    return WriteFile(hComm_, frame, len, &bytesWritten, NULL) && bytesWritten == len;
 }
 
 bool RS485Comm::recvFrame(uint8_t* buf, size_t buf_len, size_t& recv_len) {
-    // 這裡簡化為阻塞讀取固定長度
-    recv_len = read(fd_, buf, buf_len);
-    return recv_len > 0;
+    DWORD bytesRead;
+    if (ReadFile(hComm_, buf, buf_len, &bytesRead, NULL)) {
+        recv_len = bytesRead;
+        return recv_len > 0;
+    }
+    recv_len = 0;
+    return false;
 }
 
 bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
     uint8_t frame[8];
     frame[0] = slave_id_;
-    frame[1] = 0x06;                           // Func 06 :contentReference[oaicite:0]{index=0}
+    frame[1] = 0x06;
     frame[2] = reg_addr >> 8;
     frame[3] = reg_addr & 0xFF;
     frame[4] = value >> 8;
@@ -75,28 +110,34 @@ bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
     frame[7] = crc >> 8;
     if (!sendFrame(frame, 8)) return false;
 
-    // 讀回 Echo
     uint8_t resp[8];
     size_t rlen;
-    return recvFrame(resp, sizeof(resp), rlen) && rlen == 8;
+    // 在Modbus RTU中，主站發送寫入請求後，從站會回傳完全相同的數據幀
+    return recvFrame(resp, sizeof(resp), rlen) && rlen == 8 && memcmp(frame, resp, 8) == 0;
 }
 
 bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
     uint8_t frame[8];
     frame[0] = slave_id_;
-    frame[1] = 0x03;                           // Func 03 :contentReference[oaicite:1]{index=1}
+    frame[1] = 0x03;
     frame[2] = reg_addr >> 8;
     frame[3] = reg_addr & 0xFF;
     frame[4] = 0x00;
-    frame[5] = 0x01;                           // 讀一個字
+    frame[5] = 0x01;
     uint16_t crc = calcCRC(frame, 6);
     frame[6] = crc & 0xFF;
     frame[7] = crc >> 8;
     if (!sendFrame(frame, 8)) return false;
 
+    // 預期的回應長度是 5 (ID, Func, ByteCount, Val_Hi, Val_Lo) + 2 (CRC) = 7
     uint8_t resp[7];
     size_t rlen;
-    if (!recvFrame(resp, sizeof(resp), rlen) || rlen < 7) return false;
+    if (!recvFrame(resp, sizeof(resp), rlen) || rlen < 5) return false;
+
+    // 簡單的CRC校驗
+    uint16_t resp_crc = (resp[rlen-1] << 8) | resp[rlen-2];
+    if (calcCRC(resp, rlen-2) != resp_crc) return false;
+
     value = (resp[3] << 8) | resp[4];
     return true;
 }
