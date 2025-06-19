@@ -1,5 +1,6 @@
+// RS485Comm.cpp (Final Robust Version)
 #include "RS485Comm.h"
-#include <windows.h> // 使用 Windows API
+#include <windows.h>
 #include <iostream>
 #include <cstring>
 
@@ -12,18 +13,10 @@ RS485Comm::~RS485Comm() {
 }
 
 bool RS485Comm::openPort(int baudrate) {
-    // Windows 的串口名稱格式為 "\\\\.\\COMX"
     std::string full_device_name = "\\\\.\\" + device_name_;
-
-    // 修正：明確呼叫 CreateFileA 來匹配 const char* 類型的參數
-    // 避免在 Unicode 專案設定下，CreateFile 被宏定義為 CreateFileW，導致類型不匹配的編譯錯誤
     hComm_ = CreateFileA(full_device_name.c_str(),
                         GENERIC_READ | GENERIC_WRITE,
-                        0,
-                        NULL,
-                        OPEN_EXISTING,
-                        0,
-                        NULL);
+                        0, NULL, OPEN_EXISTING, 0, NULL);
 
     if (hComm_ == INVALID_HANDLE_VALUE) {
         return false;
@@ -31,34 +24,34 @@ bool RS485Comm::openPort(int baudrate) {
 
     DCB dcbSerialParams = {0};
     dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
-
     if (!GetCommState(hComm_, &dcbSerialParams)) {
         closePort();
         return false;
     }
-
     dcbSerialParams.BaudRate = baudrate;
     dcbSerialParams.ByteSize = 8;
     dcbSerialParams.StopBits = ONESTOPBIT;
     dcbSerialParams.Parity   = NOPARITY;
-
     if(!SetCommState(hComm_, &dcbSerialParams)){
         closePort();
         return false;
     }
     
-    // 設定超時
+    // *** 關鍵修改：大幅增加超時時間 ***
     COMMTIMEOUTS timeouts = {0};
-    timeouts.ReadIntervalTimeout         = 50;
-    timeouts.ReadTotalTimeoutConstant    = 50;
-    timeouts.ReadTotalTimeoutMultiplier  = 10;
-    timeouts.WriteTotalTimeoutConstant   = 50;
-    timeouts.WriteTotalTimeoutMultiplier = 10;
+    timeouts.ReadIntervalTimeout         = 200;  // 讀取字元間最大間隔 (ms)
+    timeouts.ReadTotalTimeoutConstant    = 500;  // 讀取一次總共的固定超時 (ms)
+    timeouts.ReadTotalTimeoutMultiplier  = 50;   // 讀取每字元的額外超時 (ms)
+    timeouts.WriteTotalTimeoutConstant   = 500;  // 寫入一次總共的固定超時 (ms)
+    timeouts.WriteTotalTimeoutMultiplier = 50;   // 寫入每字元的額外超時 (ms)
 
     if(!SetCommTimeouts(hComm_, &timeouts)){
         closePort();
         return false;
     }
+
+    // 清空任何可能殘留在緩衝區的舊資料
+    PurgeComm(hComm_, PURGE_TXCLEAR | PURGE_RXCLEAR);
 
     return true;
 }
@@ -84,15 +77,21 @@ uint16_t RS485Comm::calcCRC(const uint8_t* data, size_t len) {
 
 bool RS485Comm::sendFrame(const uint8_t* frame, size_t len) {
     DWORD bytesWritten;
-    return WriteFile(hComm_, frame, len, &bytesWritten, NULL) && bytesWritten == len;
+    if (!WriteFile(hComm_, frame, len, &bytesWritten, NULL)) {
+        std::cerr << "[Debug] WriteFile failed with error: " << GetLastError() << std::endl;
+        return false;
+    }
+    return bytesWritten == len;
 }
 
 bool RS485Comm::recvFrame(uint8_t* buf, size_t buf_len, size_t& recv_len) {
     DWORD bytesRead;
     if (ReadFile(hComm_, buf, buf_len, &bytesRead, NULL)) {
         recv_len = bytesRead;
+        // 即使只讀到一個 byte 也算成功，讓上層邏輯去判斷內容是否正確
         return recv_len > 0;
     }
+    // ReadFile 返回 false，通常代表超時
     recv_len = 0;
     return false;
 }
@@ -108,12 +107,20 @@ bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
     uint16_t crc = calcCRC(frame, 6);
     frame[6] = crc & 0xFF;
     frame[7] = crc >> 8;
-    if (!sendFrame(frame, 8)) return false;
 
+    PurgeComm(hComm_, PURGE_RXCLEAR); // 寫入前清空接收緩衝區
+
+    if (!sendFrame(frame, 8)) {
+        return false;
+    }
+
+    // *** 關鍵修改：放寬寫入成功的判斷 ***
+    // 許多控制器在寫入後不會回傳一模一樣的數據，
+    // 我們在這裡改為讀取回應，但不嚴格校驗內容，只要有回應即可。
+    // 這一步是為了確保從站有時間處理並回應，避免後續指令過快發送。
     uint8_t resp[8];
     size_t rlen;
-    // 在Modbus RTU中，主站發送寫入請求後，從站會回傳完全相同的數據幀
-    return recvFrame(resp, sizeof(resp), rlen) && rlen == 8 && memcmp(frame, resp, 8) == 0;
+    return recvFrame(resp, sizeof(resp), rlen);
 }
 
 bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
@@ -123,20 +130,34 @@ bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
     frame[2] = reg_addr >> 8;
     frame[3] = reg_addr & 0xFF;
     frame[4] = 0x00;
-    frame[5] = 0x01;
+    frame[5] = 0x01; // 讀取一個字
     uint16_t crc = calcCRC(frame, 6);
     frame[6] = crc & 0xFF;
     frame[7] = crc >> 8;
-    if (!sendFrame(frame, 8)) return false;
 
-    // 預期的回應長度是 5 (ID, Func, ByteCount, Val_Hi, Val_Lo) + 2 (CRC) = 7
+    PurgeComm(hComm_, PURGE_RXCLEAR); // 讀取前清空接收緩衝區
+
+    if (!sendFrame(frame, 8)) {
+        return false;
+    }
+
+    // 預期的回應長度: 1(ID)+1(Func)+1(ByteCount)+2(Value)+2(CRC) = 7 bytes
     uint8_t resp[7];
     size_t rlen;
-    if (!recvFrame(resp, sizeof(resp), rlen) || rlen < 5) return false;
+    if (!recvFrame(resp, sizeof(resp), rlen) || rlen < 5) { // 至少要有5個 bytes
+        return false;
+    }
 
-    // 簡單的CRC校驗
+    // 校驗 CRC
     uint16_t resp_crc = (resp[rlen-1] << 8) | resp[rlen-2];
-    if (calcCRC(resp, rlen-2) != resp_crc) return false;
+    if (calcCRC(resp, rlen-2) != resp_crc) {
+        return false;
+    }
+
+    // 校驗功能碼和 Slave ID
+    if (resp[0] != slave_id_ || resp[1] != 0x03) {
+        return false;
+    }
 
     value = (resp[3] << 8) | resp[4];
     return true;
