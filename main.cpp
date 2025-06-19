@@ -21,7 +21,7 @@ int main() {
     // 1. 啟動 Servo
     comm.writeRegister(REG_SERVO_ON, 1);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 
     // 2. 開啟伺服運轉
     comm.writeRegister(REG_START, 1);
