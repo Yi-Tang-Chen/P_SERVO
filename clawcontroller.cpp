@@ -1,12 +1,11 @@
-// main.cpp (Clean Version)
-#include "main.h"
+#include "clawcontroller.h"
 
-// 構造函數
+// Struct function
 ClawController::ClawController(RS485Comm& comm, int init_wait_ms)
   : comm_(comm), init_wait_ms_(init_wait_ms)
 {}
 
-// 初始化伺服
+// initialize server
 void ClawController::initializeServo() {
     if (!comm_.writeRegister(REG_ACTION_SERVO_ON, 0)) {
         std::cerr << "[Error] Failed to enable servo.\n";
@@ -46,7 +45,6 @@ void ClawController::readStatus() {
     std::cout << std::endl;
 }
 
-// 程序入口
 int main() {
     RS485Comm comm("COM5", 0); // Windows COM port
     if (!comm.openPort(19200)) {

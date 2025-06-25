@@ -114,10 +114,6 @@ bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
         return false;
     }
 
-    // *** 關鍵修改：放寬寫入成功的判斷 ***
-    // 許多控制器在寫入後不會回傳一模一樣的數據，
-    // 我們在這裡改為讀取回應，但不嚴格校驗內容，只要有回應即可。
-    // 這一步是為了確保從站有時間處理並回應，避免後續指令過快發送。
     uint8_t resp[8];
     size_t rlen;
     return recvFrame(resp, sizeof(resp), rlen);
