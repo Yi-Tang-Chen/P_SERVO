@@ -12,6 +12,7 @@
                 "camera.cpp",
                 "RS485Comm.cpp",
                 "clawcontroller.cpp",
+                "YoloDetector.cpp",
                 // ------------------------
                 "-o",
                 "final_project.exe", // 輸出的執行檔名稱

@@ -1,6 +1,8 @@
-// main.h
-#ifndef MAIN_H
-#define MAIN_H
+// =============================================================
+//           最終的 clawcontroller.h (夾持力控制模式版)
+// =============================================================
+#ifndef CLAWCONTROLLER_H
+#define CLAWCONTROLLER_H
 
 #include "RS485Comm.h"
 #include <cstdint>
@@ -8,34 +10,32 @@
 #include <iostream>
 #include <thread>
 
-class ClawController {
-    public:
-        // 構造：傳入已經 openPort() 的 comm，以及初始化等待毫秒數
-        ClawController(RS485Comm& comm, int init_wait_ms = 5000);
-
-        // 啟動伺服並等待完成
-        void initializeServo();
-
-        // 脈衝模式移動爪子：
-        //   direction: 0 = 正向 (開爪)；1 = 反向 (關爪)
-        //   pulseCount: 脈衝數
-        void moveClaw(uint16_t direction, uint16_t pulseCount);
-
-        // 讀取狀態寄存器
-        void readStatus();
-
-    private:
-        RS485Comm& comm_;
-        int        init_wait_ms_;
-
-        static constexpr uint16_t REG_ACTION_EXECUTE   = 0x201E; // 寫入不同數值以執行不同動作
-        static constexpr uint16_t REG_ACTION_SERVO_ON  = 0x2011; // 伺服 ON/OFF 0/1
-
-        // 資料設定相關 (Data Registers)
-        static constexpr uint16_t REG_RELATIVE_MOVE_PULSES = 0x2000; // 相對移動的脈衝數
-
-        // 狀態讀取相關 (Status Registers)
-        static constexpr uint16_t REG_MOTION_STATUS      = 0x1000; // 讀取動作狀態 (停止/作動中/異常)
+// 定義夾爪狀態，讓主程式呼叫更直觀
+enum class ClawState {
+    OPEN,
+    CLOSE
 };
 
-#endif // MAIN_H
+class ClawController {
+public:
+    ClawController(RS485Comm& comm, int init_wait_ms = 2000);
+
+    void initializeServo();
+    // 我們不再使用 moveClaw，而是用新的函式
+    void setClawState(ClawState state, uint16_t force_percent = 50); // 預設 50% 力道
+    void readStatus();
+
+private:
+    RS485Comm& comm_;
+    int init_wait_ms_;
+
+    // 重新定義暫存器位址 (根據夾持力控制的需求)
+    static constexpr uint16_t REG_ACTION_SERVO_ON   = 0x2011; // 伺服 ON/OFF
+    static constexpr uint16_t REG_PUSH_FORCE_CW     = 0x0400; // +向下壓扭力 (夾緊)
+    static constexpr uint16_t REG_PUSH_FORCE_CCW    = 0x0401; // -向下壓扭力 (鬆開)
+    static constexpr uint16_t REG_PUSH_DIRECTION    = 0x2005; // 探測扭力極限移動方向
+    static constexpr uint16_t REG_ACTION_EXECUTE    = 0x201E; // 動作執行
+    static constexpr uint16_t REG_MOTION_STATUS     = 0x1000; // 讀取動作狀態
+};
+
+#endif // CLAWCONTROLLER_H

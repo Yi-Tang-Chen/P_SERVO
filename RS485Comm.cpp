@@ -1,12 +1,14 @@
-// RS485Comm.cpp (Final Robust Version)
 #include "RS485Comm.h"
 #include <windows.h>
 #include <iostream>
-#include <cstring>
+#include <vector>
+#include <sstream>
+#include <iomanip>
+
+// --- 構造/解構 和 open/closePort 維持不變 ---
 
 RS485Comm::RS485Comm(const std::string& device, uint8_t slave_id)
-: hComm_(INVALID_HANDLE_VALUE), slave_id_(slave_id), device_name_(device) {
-}
+: hComm_(INVALID_HANDLE_VALUE), slave_id_(slave_id), device_name_(device) {}
 
 RS485Comm::~RS485Comm() {
     closePort();
@@ -18,9 +20,7 @@ bool RS485Comm::openPort(int baudrate) {
                         GENERIC_READ | GENERIC_WRITE,
                         0, NULL, OPEN_EXISTING, 0, NULL);
 
-    if (hComm_ == INVALID_HANDLE_VALUE) {
-        return false;
-    }
+    if (hComm_ == INVALID_HANDLE_VALUE) return false;
 
     DCB dcbSerialParams = {0};
     dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
@@ -28,6 +28,7 @@ bool RS485Comm::openPort(int baudrate) {
         closePort();
         return false;
     }
+    
     dcbSerialParams.BaudRate = baudrate;
     dcbSerialParams.ByteSize = 8;
     dcbSerialParams.StopBits = ONESTOPBIT;
@@ -36,23 +37,19 @@ bool RS485Comm::openPort(int baudrate) {
         closePort();
         return false;
     }
-    
-    // *** 關鍵修改：大幅增加超時時間 ***
-    COMMTIMEOUTS timeouts = {0};
-    timeouts.ReadIntervalTimeout         = 200;  // 讀取字元間最大間隔 (ms)
-    timeouts.ReadTotalTimeoutConstant    = 500;  // 讀取一次總共的固定超時 (ms)
-    timeouts.ReadTotalTimeoutMultiplier  = 50;   // 讀取每字元的額外超時 (ms)
-    timeouts.WriteTotalTimeoutConstant   = 500;  // 寫入一次總共的固定超時 (ms)
-    timeouts.WriteTotalTimeoutMultiplier = 50;   // 寫入每字元的額外超時 (ms)
 
+    COMMTIMEOUTS timeouts = {0};
+    timeouts.ReadIntervalTimeout         = 200;
+    timeouts.ReadTotalTimeoutConstant    = 500;
+    timeouts.ReadTotalTimeoutMultiplier  = 50;
+    timeouts.WriteTotalTimeoutConstant   = 500;
+    timeouts.WriteTotalTimeoutMultiplier = 50;
     if(!SetCommTimeouts(hComm_, &timeouts)){
         closePort();
         return false;
     }
 
-    // 清空任何可能殘留在緩衝區的舊資料
     PurgeComm(hComm_, PURGE_TXCLEAR | PURGE_RXCLEAR);
-
     return true;
 }
 
@@ -63,98 +60,138 @@ void RS485Comm::closePort() {
     }
 }
 
-uint16_t RS485Comm::calcCRC(const uint8_t* data, size_t len) {
-    uint16_t crc = 0xFFFF;
-    for (size_t i = 0; i < len; ++i) {
-        crc ^= data[i];
-        for (int b = 0; b < 8; ++b) {
-            if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;
-            else             crc >>= 1;
-        }
+
+
+uint8_t RS485Comm::calcLRC(const std::vector<uint8_t>& data) {
+    uint8_t lrc = 0;
+    for (uint8_t byte : data) {
+        lrc += byte;
     }
-    return crc;
+    return (uint8_t)(-(int8_t)lrc);
 }
 
-bool RS485Comm::sendFrame(const uint8_t* frame, size_t len) {
+std::string RS485Comm::byteToAscii(uint8_t byte) {
+    std::stringstream ss;
+    ss << std::setw(2) << std::setfill('0') << std::hex << (int)byte;
+    std::string result = ss.str();
+    // 轉為大寫
+    for (auto & c: result) c = toupper(c);
+    return result;
+}
+
+uint8_t RS485Comm::asciiToByte(const char* ascii) {
+    char hex[3] = { ascii[0], ascii[1], '\0' };
+    return (uint8_t)std::stoul(hex, nullptr, 16);
+}
+
+// sendFrame 和 recvFrame 現在處理 string
+bool RS485Comm::sendFrame(const std::string& frame) {
     DWORD bytesWritten;
-    if (!WriteFile(hComm_, frame, len, &bytesWritten, NULL)) {
-        std::cerr << "[Debug] WriteFile failed with error: " << GetLastError() << std::endl;
+    if (!WriteFile(hComm_, frame.c_str(), frame.length(), &bytesWritten, NULL)) {
         return false;
     }
-    return bytesWritten == len;
+    return bytesWritten == frame.length();
 }
 
-bool RS485Comm::recvFrame(uint8_t* buf, size_t buf_len, size_t& recv_len) {
+bool RS485Comm::recvFrame(std::string& response) {
+    char buf[256] = {0}; // 接收緩衝區
     DWORD bytesRead;
-    if (ReadFile(hComm_, buf, buf_len, &bytesRead, NULL)) {
-        recv_len = bytesRead;
-        // 即使只讀到一個 byte 也算成功，讓上層邏輯去判斷內容是否正確
-        return recv_len > 0;
+    if (ReadFile(hComm_, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+        response.assign(buf, bytesRead);
+        return true;
     }
-    // ReadFile 返回 false，通常代表超時
-    recv_len = 0;
     return false;
 }
 
+
+// --- 核心邏輯重寫 ---
+
 bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
-    uint8_t frame[8];
-    frame[0] = slave_id_;
-    frame[1] = 0x06;
-    frame[2] = reg_addr >> 8;
-    frame[3] = reg_addr & 0xFF;
-    frame[4] = value >> 8;
-    frame[5] = value & 0xFF;
-    uint16_t crc = calcCRC(frame, 6);
-    frame[6] = crc & 0xFF;
-    frame[7] = crc >> 8;
+    std::vector<uint8_t> data_rtu;
+    data_rtu.push_back(slave_id_);
+    data_rtu.push_back(0x06);
+    data_rtu.push_back(reg_addr >> 8);
+    data_rtu.push_back(reg_addr & 0xFF);
+    data_rtu.push_back(value >> 8);
+    data_rtu.push_back(value & 0xFF);
 
-    PurgeComm(hComm_, PURGE_RXCLEAR); // 寫入前清空接收緩衝區
+    uint8_t lrc = calcLRC(data_rtu);
 
-    if (!sendFrame(frame, 8)) {
-        return false;
+    std::string frame = ":";
+    for(uint8_t byte : data_rtu) {
+        frame += byteToAscii(byte);
     }
+    frame += byteToAscii(lrc);
+    frame += "\r\n";
 
-    uint8_t resp[8];
-    size_t rlen;
-    return recvFrame(resp, sizeof(resp), rlen);
+    PurgeComm(hComm_, PURGE_RXCLEAR);
+
+    if (!sendFrame(frame)) return false;
+
+    std::string response;
+    if (!recvFrame(response)) return false;
+
+    // 判斷成功與否：檢查回應是否是我們發送的指令的回聲
+    // 這樣可以同時處理正常回聲和例外回應
+    return response.find(frame.substr(0, frame.length() - 2)) != std::string::npos;
 }
 
 bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
-    uint8_t frame[8];
-    frame[0] = slave_id_;
-    frame[1] = 0x03;
-    frame[2] = reg_addr >> 8;
-    frame[3] = reg_addr & 0xFF;
-    frame[4] = 0x00;
-    frame[5] = 0x01; // 讀取一個字
-    uint16_t crc = calcCRC(frame, 6);
-    frame[6] = crc & 0xFF;
-    frame[7] = crc >> 8;
+    // 1. 組合 RTU 部分的資料
+    std::vector<uint8_t> data_rtu;
+    data_rtu.push_back(slave_id_);
+    data_rtu.push_back(0x03); // Function code
+    data_rtu.push_back(reg_addr >> 8);
+    data_rtu.push_back(reg_addr & 0xFF);
+    data_rtu.push_back(0x00); // 讀取數量的高位元組
+    data_rtu.push_back(0x01); // 讀取數量的低位元組 (讀取一個)
 
-    PurgeComm(hComm_, PURGE_RXCLEAR); // 讀取前清空接收緩衝區
+    // 2. 計算 LRC
+    uint8_t lrc = calcLRC(data_rtu);
 
-    if (!sendFrame(frame, 8)) {
+    // 3. 建立完整的 ASCII 訊框
+    std::string frame = ":";
+    for(uint8_t byte : data_rtu) {
+        frame += byteToAscii(byte);
+    }
+    frame += byteToAscii(lrc);
+    frame += "\r\n"; // 結尾符
+
+    PurgeComm(hComm_, PURGE_RXCLEAR);
+
+    if (!sendFrame(frame)) return false;
+
+    std::string response;
+    if (!recvFrame(response) || response.length() < 11) { // 預期回應 :010302(val)XX\r\n -> 至少 1+6+2+2 = 11 字元
         return false;
     }
 
-    // 預期的回應長度: 1(ID)+1(Func)+1(ByteCount)+2(Value)+2(CRC) = 7 bytes
-    uint8_t resp[7];
-    size_t rlen;
-    if (!recvFrame(resp, sizeof(resp), rlen) || rlen < 5) { // 至少要有5個 bytes
-        return false;
+    // 4. 解析回應
+    if (response[0] != ':') return false;
+
+    std::vector<uint8_t> resp_data;
+    // 從第1個字元開始，每2個字元轉成一個byte
+    for (size_t i = 1; i + 1 < response.length(); i += 2) {
+        // 遇到 CR 或 LF 就停止
+        if (response[i] == '\r' || response[i] == '\n') break;
+        resp_data.push_back(asciiToByte(&response[i]));
+    }
+    
+    if (resp_data.size() < 4) return false; // ID, Func, Count, LRC 至少要有
+
+    // 校驗 LRC
+    uint8_t received_lrc = resp_data.back();
+    resp_data.pop_back(); // 移除 LRC 以便計算
+    if (calcLRC(resp_data) != received_lrc) return false;
+
+    // 校驗 Slave ID 和 Function Code
+    if (resp_data[0] != slave_id_ || resp_data[1] != 0x03) return false;
+
+    // 提取數值
+    if (resp_data.size() >= 4 && resp_data[2] == 2) { // Byte count 應為 2
+        value = (resp_data[3] << 8) | resp_data[4];
+        return true;
     }
 
-    // 校驗 CRC
-    uint16_t resp_crc = (resp[rlen-1] << 8) | resp[rlen-2];
-    if (calcCRC(resp, rlen-2) != resp_crc) {
-        return false;
-    }
-
-    // 校驗功能碼和 Slave ID
-    if (resp[0] != slave_id_ || resp[1] != 0x03) {
-        return false;
-    }
-
-    value = (resp[3] << 8) | resp[4];
-    return true;
+    return false;
 }

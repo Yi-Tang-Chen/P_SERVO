@@ -3,31 +3,37 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 class RS485Comm {
-    public:
-        // device: 串口裝置 (e.g. "COM1")；slave_id: Modbus ID
-        RS485Comm(const std::string& device, uint8_t slave_id);
-        ~RS485Comm();
+public:
+    RS485Comm(const std::string& device, uint8_t slave_id);
+    ~RS485Comm();
 
-        // 打開串口並設定 8-N-1，預設 19200bps
-        bool openPort(int baudrate = 19200);
-        void closePort();
+    bool openPort(int baudrate = 19200);
+    void closePort();
 
-        // 寫入單一暫存器（Modbus Function 0x06）
-        bool writeRegister(uint16_t reg_addr, uint16_t value);
-        // 讀取單一暫存器（Modbus Function 0x03）
-        bool readRegister(uint16_t reg_addr, uint16_t& value);
+    bool writeRegister(uint16_t reg_addr, uint16_t value);
+    bool readRegister(uint16_t reg_addr, uint16_t& value);
 
-    private:
-        void* hComm_; // 在 Windows 中使用 HANDLE
-        uint8_t slave_id_;
-        std::string device_name_;
+private:
+    void* hComm_;
+    uint8_t slave_id_;
+    std::string device_name_;
 
-        // 計算 CRC-16(Modbus)
-        uint16_t calcCRC(const uint8_t* data, size_t len);
-        bool     sendFrame(const uint8_t* frame, size_t len);
-        bool     recvFrame(uint8_t* buf, size_t buf_len, size_t& recv_len);
+    // --- 新增的 Modbus ASCII 輔助函式 ---
+
+    // 計算 LRC 校驗碼
+    uint8_t calcLRC(const std::vector<uint8_t>& data);
+
+    // 將一個 byte 轉成兩個 ASCII hex 字元 (e.g., 0x1A -> "1A")
+    std::string byteToAscii(uint8_t byte);
+
+    // 將兩個 ASCII hex 字元轉成一個 byte (e.g., "1A" -> 0x1A)
+    uint8_t asciiToByte(const char* ascii);
+
+    bool sendFrame(const std::string& frame);
+    bool recvFrame(std::string& response);
 };
 
 #endif // RS485COMM_H
