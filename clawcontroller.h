@@ -25,6 +25,7 @@ public:
     bool isActuallyOn();
     void clearDeviationCounter();
     void resetAlarm();
+    void clearAllFaults();
 
 private:
     RS485Comm& comm_;

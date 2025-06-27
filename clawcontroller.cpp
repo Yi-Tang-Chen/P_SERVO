@@ -9,13 +9,13 @@ void ClawController::initialize() {
 
 bool ClawController::servoOn() {
     std::cout << "\n[Servo] Sending ON command (writing 1 to 0x2011)..." << std::endl;
-    return comm_.writeRegister(0x2011, 1);
+    return comm_.writeRegister(0x2011, 0);
 }
 
 // 真實的 Servo OFF: 寫入 0
 bool ClawController::servoOff() {
     std::cout << "\n[Servo] Sending OFF command (writing 0 to 0x2011)..." << std::endl;
-    return comm_.writeRegister(0x2011, 0);
+    return comm_.writeRegister(0x2011, 1);
 }
 
 // JOG 開始函式
@@ -46,10 +46,25 @@ void ClawController::clearDeviationCounter() {
     comm_.writeRegister(REG_ACTION_EXECUTE, 8);
 }
 
-void ClawController::resetAlarm() {
-    std::cout << "\n[Action] Sending Alarm Reset (CMD 7)..." << std::endl;
-    // 根據手冊，命令碼 7 代表「重置警報」
+void ClawController::clearAllFaults() {
+    std::cout << "\n[Action] Starting fault clearing procedure..." << std::endl;
+    
+    // 步驟 1: 確保伺服已斷電 (這是最重要的前提)
+    std::cout << "  > Step 1: Ensuring Servo is OFF..." << std::endl;
+    servoOff();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300)); // 等待斷電完成
+
+    // 步驟 2: 發送重置警報指令
+    std::cout << "  > Step 2: Sending Alarm Reset (CMD 7)..." << std::endl;
     comm_.writeRegister(REG_ACTION_EXECUTE, 7);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // 步驟 3: 發送清除偏差計數指令 (清除 Max Count 等相關問題)
+    std::cout << "  > Step 3: Sending Clear Deviation Counter (CMD 8)..." << std::endl;
+    comm_.writeRegister(REG_ACTION_EXECUTE, 8);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::cout << "  > Faults cleared. You can now turn Servo ON." << std::endl;
 }
 
 void ClawController::readAndPrintStatus() {
@@ -84,8 +99,8 @@ void ClawController::readAndPrintStatus() {
 
     std::cout << " | Servo: ";
     switch (servo_status) {
-        case 0: std::cout << "ON"; break;
-        case 1: std::cout << "OFF"; break;
+        case 0: std::cout << "OFF"; break;
+        case 1: std::cout << "ON"; break;
         default: std::cout << "Unknown(" << servo_status << ")"; break;
     }
 

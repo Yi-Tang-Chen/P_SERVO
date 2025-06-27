@@ -38,8 +38,7 @@ int main() {
     std::cout << "  - Press [Spacebar]: Toggle Servo ON / OFF\n";
     std::cout << "  - Press [o] / [c]: START JOG move + / -\n";
     std::cout << "  - Press [x]        : STOP JOG move\n";
-    std::cout << "  - Press [d]        : Clear Deviation Counter (for Max count error)\n";
-    std::cout << "  - Press [r]        : Reset Alarm\n"; // <--- 新增說明
+    std::cout << "  - Press [r]        : Clear All Faults (Max Count, Alarms, etc.)\n"; // <--- 更新說明
     std::cout << "  - Press [s]        : Read current status\n";
     std::cout << "  - Press [q] / [ESC]: Quit program\n";
     std::cout << "========================================================\n\n";
@@ -82,15 +81,15 @@ int main() {
         else if (key == 'x') { // 停止 JOG
             claw.jogStop();
         }
+        else if (key == 'r') { // <--- 更新 r 鍵的行為
+            claw.clearAllFaults();
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            claw.readAndPrintStatus();
+        }
         else if (key == 's') { // 狀態查詢
              // 在讀取狀態前先發送停止指令，避免通訊阻塞
             claw.jogStop(); 
             std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 等待停止完成
-            claw.readAndPrintStatus();
-        }
-        else if (key == 'r') { // <--- 新增的按鍵處理
-            claw.resetAlarm();
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
             claw.readAndPrintStatus();
         }
         else if (key == 'q' || key == 27) {
