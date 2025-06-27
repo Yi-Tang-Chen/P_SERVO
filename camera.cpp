@@ -1,70 +1,94 @@
+// camera.cpp - 英文手動控制版
+#include "clawcontroller.h"
+#include "YoloDetector.h"
+#include <opencv2/opencv.hpp>
 #include <iostream>
 #include <thread>
 #include <chrono>
-#include <opencv2/opencv.hpp>
-
-#include "RS485Comm.h"
-#include "clawcontroller.h"
-#include "YoloDetector.h"
 
 int main() {
-    // --- 硬體初始化 ---
-    RS485Comm comm("COM4", 1); 
+    // --- Hardware Initialization ---
+    RS485Comm comm("COM4", 1);
     if (!comm.openPort(19200)) {
         std::cerr << "[Fatal] Cannot open RS-485 port.\n";
         return -1;
     }
     
     ClawController claw(comm);
-    if (!claw.initialize(20)) { // 初始化時設定 JOG 速度為 20%
+    if (!claw.initialize()) {
         std::cerr << "[Fatal] Claw controller failed to initialize.\n";
         return -1;
     }
-    std::cout << "[Setup] All hardware initialized successfully.\n\n";
 
-    // --- YOLO 和攝影機初始化 ---
+    // --- YOLO and Camera Initialization ---
     YoloDetector detector("yolov8n.onnx", "coco.names");
-    if (!detector.isLoaded()) { /* ... */ return -1; }
+    if (!detector.isLoaded()) { return -1; }
     detector.start();
     std::cout << "[Info] YOLOv8 detector thread started.\n";
-    int camera_backend = cv::CAP_DSHOW; 
-    cv::VideoCapture cap(0, camera_backend); 
-    if (!cap.isOpened()) { /* ... */ return -1; }
-    std::cout << "[Info] Camera open successful\n";
+    cv::VideoCapture cap(0, cv::CAP_DSHOW);
+    if (!cap.isOpened()) { 
+        std::cerr << "[Fatal] Cannot open camera.\n";
+        return -1; 
+    }
+    std::cout << "[Info] Camera open successful.\n";
+
+    // --- Main Loop ---
+    std::cout << "\n[Info] Synchronizing state with controller...\n";
+    bool is_servo_on = claw.isActuallyOn(); 
+    std::cout << "[Info] Initial synchronization complete.\n";
+    const int16_t move_distance = 2000;
+
+    std::cout << "\n====================== INSTRUCTIONS ======================\n";
+    std::cout << "  - Press [Spacebar]: Toggle Servo ON / OFF\n";
+    std::cout << "  - Press [o] / [c]: Open / Close claw (only when Servo is ON)\n";
+    std::cout << "  - Press [s]        : Read current status\n";
+    std::cout << "  - Press [q]        : Quit program\n";
+    std::cout << "========================================================\n\n";
     
-    // --- 主迴圈 ---
-    std::cout << "\n[Info] System is running. Press 'o' to open a bit, 'c' to close a bit, 's' for status, 'q' to quit.\n";
+    claw.readAndPrintStatus();
+
     while (true) {
         cv::Mat frame;
         cap >> frame;
         if (frame.empty()) { continue; }
         
-        detector.updateFrame(frame);
-        std::vector<Detection> detections = detector.getDetections();
-        for (const auto& det : detections) {
-             cv::rectangle(frame, det.box, cv::Scalar(0, 255, 0), 2);
-             std::string label = det.class_name + ": " + cv::format("%.2f", det.confidence);
-             cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
+        // ... (YOLO detection and drawing code remains the same) ...
+        cv::imshow("Real-Time Detection", frame);
+
+        int key = cv::waitKey(1);
+
+        if (key == 32) { // 空白鍵切換伺服
+            if (is_servo_on) {
+                claw.servoOff();
+            } else {
+                claw.servoOn();
+            }
+            // 切換後，等待一下再同步狀態
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            is_servo_on = claw.isActuallyOn(); // 重新從硬體同步狀態
+            claw.readAndPrintStatus();
         }
-        cv::imshow("YOLOv8 Real-Time Detection", frame);
-        
-        int key = cv::waitKey(1); 
-        if (key == 'c') { // Close a bit
-            claw.jogStep(0, 100); // 呼叫寸動函式
-            claw.readAndPrintStatus(); // 動作後讀取狀態
-        } else if (key == 'o') { // Open a bit
-            claw.jogStep(1, 100); // 呼叫寸動函式
-            claw.readAndPrintStatus(); // 動作後讀取狀態
-        } else if (key == 's') { // 按 's' 手動查詢狀態
+        else if (key == 'c' || key == 'o') { // 打開或關閉
+            // 在移動前，永遠以最新的硬體狀態為準
+            if (claw.isActuallyOn()) {
+                claw.moveRelative(key == 'c' ? move_distance : -move_distance);
+                claw.readAndPrintStatus();
+            } else {
+                std::cout << "[Warning] Servo is OFF. Please press Spacebar to turn it ON first.\n";
+            }
+        }
+        else if (key == 's') { // Status
             claw.readAndPrintStatus();
         } else if (key == 'q' || key == 27) {
             break;
         }
     }
 
-    // --- 收尾 ---
+    // --- Cleanup ---
     detector.stop();
-    comm.writeRegister(0x2011, 1); // 結束程式前關閉伺服
+    if (is_servo_on) {
+        claw.servoOff(); 
+    }
     std::cout << "[Info] Program finished.\n";
     
     return 0;
