@@ -1,4 +1,3 @@
-// clawcontroller.h - 最終GUI模擬版
 #ifndef CLAWCONTROLLER_H
 #define CLAWCONTROLLER_H
 
@@ -12,8 +11,8 @@ class ClawController {
 public:
     ClawController(RS485Comm& comm);
 
-    // 初始化現在只負責重置警報
-    bool initialize();
+    // 初始化，現在只負責重置警報
+    void initialize();
 
     // 透過偽通訊埠來開關伺服
     bool servoOn();
@@ -23,8 +22,8 @@ public:
     void moveRelative(int16_t distance);
     void readAndPrintStatus();
 
+    // 直接從硬體讀取伺服的真實狀態
     bool isActuallyOn();
-
 
 private:
     RS485Comm& comm_;
@@ -43,4 +42,4 @@ private:
     static constexpr uint16_t CMD_RELATIVE_MOVE = 0;
 };
 
-#endif
+#endif // CLAWCONTROLLER_H

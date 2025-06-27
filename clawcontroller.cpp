@@ -2,21 +2,23 @@
 
 ClawController::ClawController(RS485Comm& comm) : comm_(comm) {}
 
-bool ClawController::initialize() {
+void ClawController::initialize() {
     std::cout << "[Setup] Initializing controller...\n";
+    // 為了安全，重置一下可能存在的舊警報
     comm_.writeRegister(REG_ACTION_EXECUTE, CMD_ALARM_RESET);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     std::cout << "[Setup] Initialization complete.\n";
-    return true;
 }
 
 bool ClawController::servoOn() {
     std::cout << "\n[Servo] Sending ON command via Pseudo Port (emulating GUI)...\n";
+    // 寫入 0 到 0x2016 來模擬 IN1 OFF，根據反向邏輯，這會觸發 Servo ON
     return comm_.writeRegister(REG_PSEUDO_IN1, 0);
 }
 
 bool ClawController::servoOff() {
     std::cout << "\n[Servo] Sending OFF command via Pseudo Port...\n";
+    // 寫入 1 到 0x2016 來模擬 IN1 ON，根據反向邏輯，這會觸發 Servo OFF
     return comm_.writeRegister(REG_PSEUDO_IN1, 1);
 }
 
@@ -36,13 +38,10 @@ void ClawController::moveRelative(int16_t distance) {
 
 bool ClawController::isActuallyOn() {
     uint16_t servo_status;
-    // 讀取伺服狀態暫存器 0x1022
     if (comm_.readRegister(REG_SERVO_STATUS, servo_status)) {
-        // 根據手冊，值為 0 代表 Servo ON
-        return (servo_status == 0);
+        return (servo_status == 0); // 值為 0 代表 Servo ON
     }
-    // 如果讀取失敗，為安全起見，假設它是關閉的
-    return false;
+    return false; // 讀取失敗時，假設為 OFF
 }
 
 void ClawController::readAndPrintStatus() {
