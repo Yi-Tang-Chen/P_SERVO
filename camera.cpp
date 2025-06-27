@@ -19,11 +19,9 @@ int main() {
     std::cout << "[Main] Waiting 3 seconds for controller to power up and stabilize...\n";
     std::this_thread::sleep_for(std::chrono::seconds(3));
     
-    // 現在才初始化我們的軟體介面
     claw.initialize();
 
-
-    // --- YOLO and Camera Initialization ---
+    // --- YOLO 和攝影機初始化 ---
     YoloDetector detector("yolov8n.onnx", "coco.names");
     if (!detector.isLoaded()) { return -1; }
     detector.start();
@@ -35,17 +33,15 @@ int main() {
     }
     std::cout << "[Info] Camera open successful.\n";
 
-    // --- Main Loop ---
-    std::cout << "\n[Info] Synchronizing state with controller...\n";
-    // 關鍵：用硬體的真實狀態來初始化我們的軟體狀態變數
-    bool is_servo_on = claw.isActuallyOn();
-    std::cout << "[Info] Initial synchronization complete.\n";
-
+    // --- 主迴圈 ---
     std::cout << "\n====================== INSTRUCTIONS ======================\n";
     std::cout << "  - Press [Spacebar]: Toggle Servo ON / OFF\n";
-    std::cout << "  - Press [o] / [c]: Open / Close claw (only when Servo is ON)\n";
+    std::cout << "  - Press [o] / [c]: START JOG move + / -\n";
+    std::cout << "  - Press [x]        : STOP JOG move\n";
+    std::cout << "  - Press [d]        : Clear Deviation Counter (for Max count error)\n";
+    std::cout << "  - Press [r]        : Reset Alarm\n"; // <--- 新增說明
     std::cout << "  - Press [s]        : Read current status\n";
-    std::cout << "  - Press [q]        : Quit program\n";
+    std::cout << "  - Press [q] / [ESC]: Quit program\n";
     std::cout << "========================================================\n\n";
     
     claw.readAndPrintStatus();
@@ -55,11 +51,9 @@ int main() {
         cap >> frame;
         if (frame.empty()) { continue; }
         
-        // 此處應有您的YOLO辨識與繪圖程式碼
         detector.updateFrame(frame);
         std::vector<Detection> detections = detector.getDetections();
         for (const auto& det : detections) {
-            // 你可以在此處加入篩選，例如 if (det.class_name == "person")
             cv::rectangle(frame, det.box, cv::Scalar(0, 255, 0), 2);
             std::string label = det.class_name + ": " + cv::format("%.2f", det.confidence);
             cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
@@ -70,24 +64,33 @@ int main() {
         int key = cv::waitKey(1);
 
         if (key == 32) { // 空白鍵切換
-            if (is_servo_on) {
+            // 直接根據真實狀態來決定執行 ON 還是 OFF
+            if (claw.isActuallyOn()) {
                 claw.servoOff();
             } else {
                 claw.servoOn();
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            is_servo_on = claw.isActuallyOn(); // 重新同步
-            claw.readAndPrintStatus();
         }
-        else if (key == 'c' || key == 'o') { // 移動
+        else if (key == 'o' || key == 'c') { // 開始 JOG
+            // 每次都重新獲取最真實的狀態
             if (claw.isActuallyOn()) {
-                claw.moveRelative(key == 'c' ? 2000 : -2000);
-                claw.readAndPrintStatus();
+                claw.jogStart(key == 'o'); // 'o' for positive, 'c' for negative
             } else {
                 std::cout << "[Warning] Servo is OFF. Please press Spacebar to turn it ON first.\n";
             }
         }
+        else if (key == 'x') { // 停止 JOG
+            claw.jogStop();
+        }
         else if (key == 's') { // 狀態查詢
+             // 在讀取狀態前先發送停止指令，避免通訊阻塞
+            claw.jogStop(); 
+            std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 等待停止完成
+            claw.readAndPrintStatus();
+        }
+        else if (key == 'r') { // <--- 新增的按鍵處理
+            claw.resetAlarm();
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
             claw.readAndPrintStatus();
         }
         else if (key == 'q' || key == 27) {
@@ -95,9 +98,12 @@ int main() {
         }
     }
 
-    // --- Cleanup ---
+    // --- 程式結束前的清理 ---
     detector.stop();
+    // 確保在退出前伺服是關閉的
     if (claw.isActuallyOn()) {
+        claw.jogStop(); // 先停止任何可能的移動
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
         claw.servoOff(); 
     }
     std::cout << "[Info] Program finished.\n";

@@ -3,45 +3,53 @@
 ClawController::ClawController(RS485Comm& comm) : comm_(comm) {}
 
 void ClawController::initialize() {
-    std::cout << "[Setup] Initializing controller...\n";
-    // 為了安全，重置一下可能存在的舊警報
-    comm_.writeRegister(REG_ACTION_EXECUTE, CMD_ALARM_RESET);
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    std::cout << "[Setup] Initialization complete.\n";
+    // 保持為空，驅動器啟動狀態已完美
+    std::cout << "[Setup] Controller interface is ready." << std::endl;
 }
 
 bool ClawController::servoOn() {
-    std::cout << "\n[Servo] Sending ON command via Pseudo Port (emulating GUI)...\n";
-    // 寫入 0 到 0x2016 來模擬 IN1 OFF，根據反向邏輯，這會觸發 Servo ON
-    return comm_.writeRegister(REG_PSEUDO_IN1, 0);
+    std::cout << "\n[Servo] Sending ON command (writing 1 to 0x2011)..." << std::endl;
+    return comm_.writeRegister(0x2011, 1);
 }
 
+// 真實的 Servo OFF: 寫入 0
 bool ClawController::servoOff() {
-    std::cout << "\n[Servo] Sending OFF command via Pseudo Port...\n";
-    // 寫入 1 到 0x2016 來模擬 IN1 ON，根據反向邏輯，這會觸發 Servo OFF
-    return comm_.writeRegister(REG_PSEUDO_IN1, 1);
+    std::cout << "\n[Servo] Sending OFF command (writing 0 to 0x2011)..." << std::endl;
+    return comm_.writeRegister(0x2011, 0);
 }
 
-void ClawController::moveRelative(int16_t distance) {
-    std::cout << "\n[Action] Moving relative: " << distance << " pulses...\n";
-    if (!comm_.writeRegister(REG_RELATIVE_POS_DATA, distance)) {
-        std::cerr << "  [Error] Failed to set relative position data.\n";
-        return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    if (!comm_.writeRegister(REG_ACTION_EXECUTE, CMD_RELATIVE_MOVE)) {
-        std::cerr << "  [Error] Failed to send relative move command.\n";
-        return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+// JOG 開始函式
+void ClawController::jogStart(bool positive) {
+    uint16_t command = positive ? 12 : 13; // 12 for JOG+, 13 for JOG-
+    std::cout << "\n[Action] Sending JOG START command (CMD " << command << ")..." << std::endl;
+    comm_.writeRegister(REG_ACTION_EXECUTE, command);
 }
 
+// JOG 停止函式
+void ClawController::jogStop() {
+    std::cout << "\n[Action] Sending JOG STOP command (CMD 9 - Decelerate Stop)..." << std::endl;
+    comm_.writeRegister(REG_ACTION_EXECUTE, 9);
+}
+
+// 讀取真實狀態，此函式邏輯正確 (狀態暫存器 0x1022 的值為 1 代表 ON)
 bool ClawController::isActuallyOn() {
     uint16_t servo_status;
-    if (comm_.readRegister(REG_SERVO_STATUS, servo_status)) {
-        return (servo_status == 0); // 值為 0 代表 Servo ON
+    if (comm_.readRegister(0x1022, servo_status)) {
+        return (servo_status == 1);
     }
-    return false; // 讀取失敗時，假設為 OFF
+    return false;
+}
+
+void ClawController::clearDeviationCounter() {
+    std::cout << "\n[Action] Sending Clear Deviation Counter (CMD 8)..." << std::endl;
+    // 根據手冊，命令碼 8 代表「重置偏差計數」
+    comm_.writeRegister(REG_ACTION_EXECUTE, 8);
+}
+
+void ClawController::resetAlarm() {
+    std::cout << "\n[Action] Sending Alarm Reset (CMD 7)..." << std::endl;
+    // 根據手冊，命令碼 7 代表「重置警報」
+    comm_.writeRegister(REG_ACTION_EXECUTE, 7);
 }
 
 void ClawController::readAndPrintStatus() {

@@ -18,12 +18,13 @@ public:
     bool servoOn();
     bool servoOff();
 
-    // 相對位置移動
-    void moveRelative(int16_t distance);
+    void jogStart(bool positive);
+    void jogStop();
+    
     void readAndPrintStatus();
-
-    // 直接從硬體讀取伺服的真實狀態
     bool isActuallyOn();
+    void clearDeviationCounter();
+    void resetAlarm();
 
 private:
     RS485Comm& comm_;

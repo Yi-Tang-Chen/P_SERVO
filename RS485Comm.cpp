@@ -103,20 +103,31 @@ bool RS485Comm::recvFrame(std::string& response) {
     return false;
 }
 
-
-// --- 核心邏輯重寫 ---
-
 bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
+    // 核心修改：強制所有寫入操作都使用功能碼 10H (Write Multiple Registers)
     std::vector<uint8_t> data_rtu;
     data_rtu.push_back(slave_id_);
-    data_rtu.push_back(0x06);
+    data_rtu.push_back(0x10); // <<<<<<<<<<<< 關鍵！使用功能碼 10H
+    
+    // 寫入的起始位址
     data_rtu.push_back(reg_addr >> 8);
     data_rtu.push_back(reg_addr & 0xFF);
+    
+    // 寫入暫存器的數量 (即使只有一個，也要按此格式指定)
+    data_rtu.push_back(0x00); // 數量高位元組 (我們要寫 1 個)
+    data_rtu.push_back(0x01); // 數量低位元組 (我們要寫 1 個)
+    
+    // 寫入數據的總位元組數 (1個暫存器 = 2個位元組)
+    data_rtu.push_back(0x02);
+    
+    // 要寫入的數值
     data_rtu.push_back(value >> 8);
     data_rtu.push_back(value & 0xFF);
 
+    // 計算 LRC 校驗碼
     uint8_t lrc = calcLRC(data_rtu);
 
+    // 組裝成 Modbus ASCII 訊框
     std::string frame = ":";
     for(uint8_t byte : data_rtu) {
         frame += byteToAscii(byte);
@@ -126,14 +137,14 @@ bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
 
     PurgeComm(hComm_, PURGE_RXCLEAR);
 
+    // 發送並檢查回應
     if (!sendFrame(frame)) return false;
 
     std::string response;
     if (!recvFrame(response)) return false;
 
-    // 判斷成功與否：檢查回應是否是我們發送的指令的回聲
-    // 這樣可以同時處理正常回聲和例外回應
-    return response.find(frame.substr(0, frame.length() - 2)) != std::string::npos;
+    // 成功的正常回應會是我們發送內容的回聲
+    return response.find(frame.substr(0, frame.length() - 4)) != std::string::npos;
 }
 
 bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
