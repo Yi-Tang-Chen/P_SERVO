@@ -1,6 +1,6 @@
-// =============================================================
-//           最終的 clawcontroller.h (夾持力控制模式版)
-// =============================================================
+// =================================================================
+//           最終的 clawcontroller.h (黃金救援序列版)
+// =================================================================
 #ifndef CLAWCONTROLLER_H
 #define CLAWCONTROLLER_H
 
@@ -10,32 +10,36 @@
 #include <iostream>
 #include <thread>
 
-// 定義夾爪狀態，讓主程式呼叫更直觀
-enum class ClawState {
-    OPEN,
-    CLOSE
-};
-
 class ClawController {
 public:
-    ClawController(RS485Comm& comm, int init_wait_ms = 2000);
+    ClawController(RS485Comm& comm);
 
-    void initializeServo();
-    // 我們不再使用 moveClaw，而是用新的函式
-    void setClawState(ClawState state, uint16_t force_percent = 50); // 預設 50% 力道
-    void readStatus();
+    // 初始化：設定 JOG 速度並啟用伺服
+    bool initialize(uint16_t jog_speed_percent = 20);
+    
+    // 執行一次寸動
+    // direction: 0 = 關閉 (+JOG), 1 = 打開 (-JOG)
+    // duration_ms: 移動的持續時間 (毫秒)
+    void jogStep(int direction, int duration_ms = 100);
+
+    // 讀取並印出當前狀態
+    void readAndPrintStatus();
 
 private:
     RS485Comm& comm_;
-    int init_wait_ms_;
 
-    // 重新定義暫存器位址 (根據夾持力控制的需求)
-    static constexpr uint16_t REG_ACTION_SERVO_ON   = 0x2011; // 伺服 ON/OFF
-    static constexpr uint16_t REG_PUSH_FORCE_CW     = 0x0400; // +向下壓扭力 (夾緊)
-    static constexpr uint16_t REG_PUSH_FORCE_CCW    = 0x0401; // -向下壓扭力 (鬆開)
-    static constexpr uint16_t REG_PUSH_DIRECTION    = 0x2005; // 探測扭力極限移動方向
-    static constexpr uint16_t REG_ACTION_EXECUTE    = 0x201E; // 動作執行
-    static constexpr uint16_t REG_MOTION_STATUS     = 0x1000; // 讀取動作狀態
+    // 暫存器位址定義
+    static constexpr uint16_t REG_SERVO_ON        = 0x2011;
+    static constexpr uint16_t REG_JOG_SPEED       = 0x080F;
+    static constexpr uint16_t REG_ACTION_EXECUTE  = 0x201E;
+    static constexpr uint16_t REG_MOTION_STATUS   = 0x1000;
+    static constexpr uint16_t REG_ALARM_STATUS    = 0x1005;
+
+    // 動作指令碼
+    static constexpr uint16_t CMD_JOG_PLUS      = 12;
+    static constexpr uint16_t CMD_JOG_MINUS     = 13;
+    static constexpr uint16_t CMD_DECEL_STOP    = 9;
+    static constexpr uint16_t CMD_ALARM_RESET   = 7;
 };
 
 #endif // CLAWCONTROLLER_H

@@ -1,69 +1,84 @@
-// =============================================================
-//           最終的 clawcontroller.cpp (夾持力控制模式版)
-// =============================================================
+// =================================================================
+//           最終的 clawcontroller.cpp (JOG 寸動 + 狀態讀取版)
+// =================================================================
 #include "clawcontroller.h"
 
-ClawController::ClawController(RS485Comm& comm, int init_wait_ms)
-  : comm_(comm), init_wait_ms_(init_wait_ms) {}
+ClawController::ClawController(RS485Comm& comm) : comm_(comm) {}
 
-void ClawController::initializeServo() {
-    if (!comm_.writeRegister(REG_ACTION_SERVO_ON, 0)) { 
-        std::cerr << "[Error] Failed to enable servo (write to 2011H).\n";
-    } else {
-        std::cout << "[Info] Servo ON command sent successfully.\n";
+bool ClawController::initialize(uint16_t jog_speed_percent) {
+    std::cout << "[Setup] Initializing and configuring JOG mode...\n";
+
+    // 重置警報，確保處於乾淨狀態
+    comm_.writeRegister(REG_ACTION_EXECUTE, CMD_ALARM_RESET);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // 設定 JOG 速度 (不再設定距離)
+    std::cout << "  - Setting JOG speed to " << jog_speed_percent << "%\n";
+    if (!comm_.writeRegister(REG_JOG_SPEED, jog_speed_percent)) {
+        std::cerr << "  [Error] Failed to set JOG speed.\n";
+        return false;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(init_wait_ms_));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // 啟用伺服
+    if (!comm_.writeRegister(REG_SERVO_ON, 0)) {
+        std::cerr << "  [Error] Failed to enable servo.\n";
+        return false;
+    }
+    std::cout << "  - Servo ON. Initialization complete.\n";
+    return true;
 }
 
-void ClawController::setClawState(ClawState state, uint16_t force_percent) {
-    uint16_t direction_value;
-    // 將 1-100 的百分比，轉換為控制器需要的 0-1000 的數值
-    uint16_t force_value = (force_percent > 100) ? 1000 : (force_percent * 10);
-
-    if (state == ClawState::OPEN) {
-        direction_value = 1; // 說明書定義: 1 = -向 (鬆開)
-        std::cout << "[Action] Preparing to OPEN claw with force " << force_percent << "%\n";
-    } else { // CLOSE
-        direction_value = 0; // 說明書定義: 0 = +向 (夾緊)
-        std::cout << "[Action] Preparing to CLOSE claw with force " << force_percent << "%\n";
-    }
+void ClawController::jogStep(int direction, int duration_ms) {
+    uint16_t command = (direction == 0) ? CMD_JOG_PLUS : CMD_JOG_MINUS;
     
-    // 步驟一：設定夾持力道 (寫入 0400H / 0401H)
-    if (!comm_.writeRegister(REG_PUSH_FORCE_CW, force_value) || !comm_.writeRegister(REG_PUSH_FORCE_CCW, force_value)) {
-        std::cerr << "[Error] Step 1: Failed to write force value to 0x0400/0x0401.\n";
+    std::cout << "\n[Action] Performing JOG step (direction: " << direction << ")...\n";
+    
+    // 步驟一：發送 JOG 開始指令
+    if (!comm_.writeRegister(REG_ACTION_EXECUTE, command)) {
+        std::cerr << "  [Error] Failed to send JOG START command.\n";
         return;
     }
-    std::cout << "[Info] Step 1: Force (" << force_value << ") written to force registers.\n";
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::cout << "  - JOG START command sent.\n";
 
-    // 步驟二：設定移動方向 (寫入 2005H)
-    if (!comm_.writeRegister(REG_PUSH_DIRECTION, direction_value)) {
-        std::cerr << "[Error] Step 2: Failed to set push direction (2005H).\n";
-        return;
-    }
-    std::cout << "[Info] Step 2: Push direction (" << direction_value << ") sent to 2005H.\n";
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    
-    // 步驟三：觸發「扭力極限探測」動作 (寫入 3 到 201EH)
-    if (!comm_.writeRegister(REG_ACTION_EXECUTE, 3)) {
-        std::cerr << "[Error] Step 3: Failed to send PUSH command (writing 3 to 201EH).\n";
+    // 步驟二：等待寸動的持續時間
+    std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+
+    // 步驟三：發送減速停止指令
+    if (!comm_.writeRegister(REG_ACTION_EXECUTE, CMD_DECEL_STOP)) {
+        std::cerr << "  [Error] Failed to send JOG STOP command.\n";
     } else {
-        std::cout << "[Info] Step 3: Execute PUSH command sent. Claw should be moving.\n";
+        std::cout << "  - JOG STOP command sent.\n";
     }
 }
 
-void ClawController::readStatus() {
-    uint16_t status = 0;
-    if (!comm_.readRegister(REG_MOTION_STATUS, status)) {
-        std::cerr << "[Error] Failed to read status register (1000H).\n";
-        return;
-    }
-    std::cout << "[Status] Motion=";
-    switch (status) {
+void ClawController::readAndPrintStatus() {
+    uint16_t motion_status = 99, alarm_status = 99;
+    
+    comm_.readRegister(REG_MOTION_STATUS, motion_status);
+    comm_.readRegister(REG_ALARM_STATUS, alarm_status);
+
+    std::cout << "[Status] Motion: ";
+    switch (motion_status) {
         case 0: std::cout << "Stopped"; break;
         case 1: std::cout << "Moving"; break;
-        case 2: std::cout << "Error"; break;
-        default: std::cout << "Unknown (" << status << ")"; break;
+        case 2: std::cout << "Alarm Stop"; break;
+        default: std::cout << "Unknown(" << motion_status << ")"; break;
+    }
+
+    std::cout << " | Alarm: ";
+    switch (alarm_status) {
+        case 0: std::cout << "No Alarm"; break;
+        case 1: std::cout << "Loop Error"; break;
+        case 2: std::cout << "Max Count"; break;
+        case 3: std::cout << "Over Speed"; break;
+        case 4: std::cout << "Gain Tuning Error"; break;
+        case 5: std::cout << "Over Voltage"; break;
+        case 6: std::cout << "Initialization Error"; break;
+        case 7: std::cout << "EEPROM Error"; break;
+        case 8: std::cout << "Position Compensation Error"; break;
+        case 99: std::cout << "Power Recycled"; break;
+        default: std::cout << "Unknown(" << alarm_status << ")"; break;
     }
     std::cout << std::endl;
 }

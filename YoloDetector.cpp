@@ -11,6 +11,7 @@ inline bool file_exists(const std::string& name) {
     return f.good();
 }
 
+// 構造函數
 YoloDetector::YoloDetector(const std::string& onnx_path, const std::string& names_path) {
     model_loaded_successfully_ = false;
 
@@ -43,10 +44,12 @@ YoloDetector::YoloDetector(const std::string& onnx_path, const std::string& name
     model_loaded_successfully_ = true;
 }
 
+// 解構函數
 YoloDetector::~YoloDetector() {
     stop();
 }
 
+// 其他函式
 void YoloDetector::start() {
     if (is_running_) return;
     is_running_ = true;
@@ -74,6 +77,7 @@ bool YoloDetector::isLoaded() const {
     return model_loaded_successfully_;
 }
 
+// 執行緒的主體
 void YoloDetector::run() {
     while (is_running_) {
         cv::Mat frame;

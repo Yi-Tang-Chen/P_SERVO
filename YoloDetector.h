@@ -22,7 +22,7 @@ struct Detection {
 
 class YoloDetector {
 public:
-    // 構造函數：現在只需要 ONNX 模型路徑和名稱路徑
+    // 構造函數：只需要 ONNX 模型路徑和名稱路徑
     YoloDetector(const std::string& onnx_path, const std::string& names_path);
     ~YoloDetector();
 
@@ -38,8 +38,8 @@ private:
     cv::dnn::Net net_;
     std::vector<std::string> class_names_;
     cv::Size input_size_ = cv::Size(640, 640);
-    float conf_threshold_ = 0.5;
-    float nms_threshold_ = 0.4;
+    float conf_threshold_ = 0.25; // 您可以調整這個信心度閾值
+    float nms_threshold_ = 0.5;   // 您可以調整這個 NMS 閾值
     
     // 執行緒同步相關
     std::thread detector_thread_;
