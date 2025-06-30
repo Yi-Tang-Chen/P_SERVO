@@ -1,17 +1,18 @@
 // =============================================================
-//               最終的 YoloDetector.cpp (YOLOv8 版本)
+//          最終的、採用標準解析演算法的 YoloDetector.cpp
 // =============================================================
 #include "YoloDetector.h"
 #include <fstream>
 #include <iostream>
+#include <vector>
 
-// 輔助函式：檢查檔案是否存在
+// 輔助函式：檢查檔案是否存在 (保持不變)
 inline bool file_exists(const std::string& name) {
     std::ifstream f(name.c_str());
     return f.good();
 }
 
-// 構造函數
+// 構造函數 (保持不變)
 YoloDetector::YoloDetector(const std::string& onnx_path, const std::string& names_path) {
     model_loaded_successfully_ = false;
 
@@ -25,8 +26,6 @@ YoloDetector::YoloDetector(const std::string& onnx_path, const std::string& name
     }
 
     net_ = cv::dnn::readNet(onnx_path);
-    // net_.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-    // net_.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
 
     std::ifstream ifs(names_path.c_str());
     std::string line;
@@ -44,40 +43,35 @@ YoloDetector::YoloDetector(const std::string& onnx_path, const std::string& name
     model_loaded_successfully_ = true;
 }
 
-// 解構函數
+// 解構函數和其它輔助函式 (保持不變)
 YoloDetector::~YoloDetector() {
     stop();
 }
-
-// 其他函式
 void YoloDetector::start() {
     if (is_running_) return;
     is_running_ = true;
     detector_thread_ = std::thread(&YoloDetector::run, this);
 }
-
 void YoloDetector::stop() {
     is_running_ = false;
     if (detector_thread_.joinable()) {
         detector_thread_.join();
     }
 }
-
 void YoloDetector::updateFrame(const cv::Mat& frame) {
     std::lock_guard<std::mutex> lock(mtx_);
     current_frame_ = frame.clone();
 }
-
 std::vector<Detection> YoloDetector::getDetections() {
     std::lock_guard<std::mutex> lock(mtx_);
     return last_detections_;
 }
-
 bool YoloDetector::isLoaded() const {
     return model_loaded_successfully_;
 }
 
-// 執行緒的主體
+
+// ======================= 核心演算法修正 =======================
 void YoloDetector::run() {
     while (is_running_) {
         cv::Mat frame;
@@ -98,8 +92,11 @@ void YoloDetector::run() {
         std::vector<cv::Mat> outs;
         net_.forward(outs, net_.getUnconnectedOutLayersNames());
         
-        cv::Mat mat(outs[0].size[1], outs[0].size[2], CV_32F, outs[0].ptr<float>());
-        cv::Mat data = mat.t();
+        // 獲取模型的輸出，這是一個 1x84x8400 的矩陣
+        const cv::Mat& output = outs[0];
+        // 獲取數據的維度
+        const int num_channels = output.size[1]; // 84
+        const int num_detections = output.size[2]; // 8400
 
         std::vector<int> class_ids;
         std::vector<float> confidences;
@@ -108,25 +105,40 @@ void YoloDetector::run() {
         float x_factor = frame.cols / (float)input_size_.width;
         float y_factor = frame.rows / (float)input_size_.height;
 
-        for (int i = 0; i < data.rows; ++i) {
-            cv::Mat scores = data.row(i).colRange(4, data.cols);
-            cv::Point class_id_point;
-            double max_conf;
-            cv::minMaxLoc(scores, 0, &max_conf, 0, &class_id_point);
+        // 直接遍歷 8400 個潛在偵測結果
+        for (int i = 0; i < num_detections; ++i) {
+            // 獲取指向當前偵測結果數據塊開頭的指針
+            const float* data = output.ptr<float>(0, 0, i);
+            
+            // 獲取當前偵測結果的類別分數部分 (從第 5 個元素開始)
+            const float* scores = data + 4;
+            
+            // 找到分數最高的那個類別
+            float max_score = *scores;
+            int class_id = 0;
+            for (int j = 1; j < num_channels - 4; ++j) {
+                if (*(scores + j) > max_score) {
+                    max_score = *(scores + j);
+                    class_id = j;
+                }
+            }
 
-            if (max_conf > conf_threshold_) {
-                confidences.push_back((float)max_conf);
-                class_ids.push_back(class_id_point.x);
+            // 如果最高信心度大於我們設定的閾值
+            if (max_score > conf_threshold_) {
+                confidences.push_back(max_score);
+                class_ids.push_back(class_id);
 
-                float cx = data.at<float>(i, 0);
-                float cy = data.at<float>(i, 1);
-                float w = data.at<float>(i, 2);
-                float h = data.at<float>(i, 3);
+                // 獲取 cx, cy, w, h
+                float cx = *data;
+                float cy = *(data + 1);
+                float w = *(data + 2);
+                float h = *(data + 3);
 
-                int left = (int)((cx - 0.5 * w) * x_factor);
-                int top = (int)((cy - 0.5 * h) * y_factor);
-                int width = (int)(w * x_factor);
-                int height = (int)(h * y_factor);
+                // 將座標從 640x640 的比例，轉換回原始影像的像素座標
+                int left = static_cast<int>((cx - 0.5 * w) * x_factor);
+                int top = static_cast<int>((cy - 0.5 * h) * y_factor);
+                int width = static_cast<int>(w * x_factor);
+                int height = static_cast<int>(h * y_factor);
                 
                 boxes.push_back(cv::Rect(left, top, width, height));
             }
@@ -141,7 +153,12 @@ void YoloDetector::run() {
             det.box = boxes[idx];
             det.class_id = class_ids[idx];
             det.confidence = confidences[idx];
-            det.class_name = class_names_[det.class_id];
+            
+            if (det.class_id >= 0 && det.class_id < class_names_.size()) {
+                det.class_name = class_names_[det.class_id];
+            } else {
+                det.class_name = "Unknown";
+            }
             detections.push_back(det);
         }
 
