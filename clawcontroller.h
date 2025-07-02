@@ -27,6 +27,9 @@ public:
     void resetAlarm();
     void clearAllFaults();
 
+    bool setJogSpeed(uint16_t speed_percent);
+    bool setInchingDistance(uint16_t distance_pulse);
+
 private:
     RS485Comm& comm_;
 
@@ -38,6 +41,9 @@ private:
     static constexpr uint16_t REG_MOTION_STATUS = 0x1000;
     static constexpr uint16_t REG_ALARM_STATUS = 0x1005;
     static constexpr uint16_t REG_ERROR_STATUS = 0x1023;
+
+    static constexpr uint16_t REG_JOG_SPEED = 0x080F;
+    static constexpr uint16_t REG_JOG_INCHING_DATA = 0x0810;
 
     // 動作指令碼
     static constexpr uint16_t CMD_ALARM_RESET = 7;

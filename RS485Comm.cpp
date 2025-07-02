@@ -5,8 +5,6 @@
 #include <sstream>
 #include <iomanip>
 
-// --- 構造/解構 和 open/closePort 維持不變 ---
-
 RS485Comm::RS485Comm(const std::string& device, uint8_t slave_id)
 : hComm_(INVALID_HANDLE_VALUE), slave_id_(slave_id), device_name_(device) {}
 
@@ -103,31 +101,17 @@ bool RS485Comm::recvFrame(std::string& response) {
     return false;
 }
 
-bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
-    // 核心修改：強制所有寫入操作都使用功能碼 10H (Write Multiple Registers)
+bool RS485Comm::writeParameter(uint16_t reg_addr, uint16_t value) {
     std::vector<uint8_t> data_rtu;
     data_rtu.push_back(slave_id_);
-    data_rtu.push_back(0x10); // <<<<<<<<<<<< 關鍵！使用功能碼 10H
-    
-    // 寫入的起始位址
+    data_rtu.push_back(0x06); // 使用「寫入單一暫存器」功能碼
     data_rtu.push_back(reg_addr >> 8);
     data_rtu.push_back(reg_addr & 0xFF);
-    
-    // 寫入暫存器的數量 (即使只有一個，也要按此格式指定)
-    data_rtu.push_back(0x00); // 數量高位元組 (我們要寫 1 個)
-    data_rtu.push_back(0x01); // 數量低位元組 (我們要寫 1 個)
-    
-    // 寫入數據的總位元組數 (1個暫存器 = 2個位元組)
-    data_rtu.push_back(0x02);
-    
-    // 要寫入的數值
     data_rtu.push_back(value >> 8);
     data_rtu.push_back(value & 0xFF);
 
-    // 計算 LRC 校驗碼
     uint8_t lrc = calcLRC(data_rtu);
 
-    // 組裝成 Modbus ASCII 訊框
     std::string frame = ":";
     for(uint8_t byte : data_rtu) {
         frame += byteToAscii(byte);
@@ -136,10 +120,38 @@ bool RS485Comm::writeRegister(uint16_t reg_addr, uint16_t value) {
     frame += "\r\n";
 
     PurgeComm(hComm_, PURGE_RXCLEAR);
-
-    // 發送並檢查回應
     if (!sendFrame(frame)) return false;
+    std::string response;
+    if (!recvFrame(response)) return false;
+    
+    // 成功的正常回應會是我們發送內容的回聲
+    return response.find(frame.substr(0, frame.length() - 4)) != std::string::npos;
+}
 
+// 專門用於「執行動作」，使用功能碼 10H
+bool RS485Comm::executeAction(uint16_t reg_addr, uint16_t value) {
+    std::vector<uint8_t> data_rtu;
+    data_rtu.push_back(slave_id_);
+    data_rtu.push_back(0x10); // 使用「寫入多個暫存器」功能碼
+    data_rtu.push_back(reg_addr >> 8);
+    data_rtu.push_back(reg_addr & 0xFF);
+    data_rtu.push_back(0x00); // 寫入數量高位 (1 個)
+    data_rtu.push_back(0x01); // 寫入數量低位 (1 個)
+    data_rtu.push_back(0x02); // 寫入位元組數 (2 bytes)
+    data_rtu.push_back(value >> 8);
+    data_rtu.push_back(value & 0xFF);
+
+    uint8_t lrc = calcLRC(data_rtu);
+
+    std::string frame = ":";
+    for(uint8_t byte : data_rtu) {
+        frame += byteToAscii(byte);
+    }
+    frame += byteToAscii(lrc);
+    frame += "\r\n";
+
+    PurgeComm(hComm_, PURGE_RXCLEAR);
+    if (!sendFrame(frame)) return false;
     std::string response;
     if (!recvFrame(response)) return false;
 
@@ -206,3 +218,63 @@ bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
 
     return false;
 }
+
+bool RS485Comm::readMultipleRegisters(uint16_t start_addr, uint16_t count, std::vector<uint16_t>& dest) {
+    if (count == 0 || count > 125) return false; // Modbus 限制
+
+    // 1. 組合 RTU 部分的資料
+    std::vector<uint8_t> data_rtu;
+    data_rtu.push_back(slave_id_);
+    data_rtu.push_back(0x03); // Function code for reading
+    data_rtu.push_back(start_addr >> 8);
+    data_rtu.push_back(start_addr & 0xFF);
+    data_rtu.push_back(count >> 8);     // <<-- 關鍵修改：讀取數量的高位元組
+    data_rtu.push_back(count & 0xFF);   // <<-- 關鍵修改：讀取數量的低位元組
+
+    // 2. 計算 LRC
+    uint8_t lrc = calcLRC(data_rtu);
+
+    // 3. 建立完整的 ASCII 訊框
+    std::string frame = ":";
+    for(uint8_t byte : data_rtu) {
+        frame += byteToAscii(byte);
+    }
+    frame += byteToAscii(lrc);
+    frame += "\r\n";
+
+    PurgeComm(hComm_, PURGE_RXCLEAR);
+    if (!sendFrame(frame)) return false;
+
+    std::string response;
+    // 預期回應長度: 1 (start) + 2(ID) + 2(Func) + 2(ByteCount) + count*4(data) + 2(LRC) + 2(End)
+    if (!recvFrame(response) || response.length() < 9) return false;
+
+    // 4. 解析回應
+    if (response[0] != ':') return false;
+
+    std::vector<uint8_t> resp_data;
+    for (size_t i = 1; i + 1 < response.length(); i += 2) {
+        if (response[i] == '\r' || response[i] == '\n') break;
+        resp_data.push_back(asciiToByte(&response[i]));
+    }
+    
+    // 預期資料長度: ID, Func, ByteCount, Data..., LRC
+    if (resp_data.size() < 4) return false;
+
+    uint8_t received_lrc = resp_data.back();
+    resp_data.pop_back();
+    if (calcLRC(resp_data) != received_lrc) return false;
+
+    // Byte count 應為 count * 2
+    if (resp_data[0] != slave_id_ || resp_data[1] != 0x03 || resp_data[2] != count * 2) return false;
+    
+    dest.clear();
+    dest.reserve(count);
+    for(uint16_t i = 0; i < count; ++i) {
+        uint16_t val = (resp_data[3 + i * 2] << 8) | resp_data[4 + i * 2];
+        dest.push_back(val);
+    }
+
+    return true;
+}
+

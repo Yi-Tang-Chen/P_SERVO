@@ -3,8 +3,8 @@
         {
             "name": "Win32",
             "includePath": [
-                "${workspaceFolder}/**",
-                "C:/CPP/opencv/build-mingw/install/include/**"
+                "${workspaceFolder}/**"
+                // "C:/CPP/opencv/opencv-install/include/**"
             ],
             "defines": [
                 "_DEBUG",

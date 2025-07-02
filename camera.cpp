@@ -1,12 +1,12 @@
 #include "clawcontroller.h"
-#include "YoloDetector.h"
-#include <opencv2/opencv.hpp>
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <conio.h>
+#include <limits>
 
 int main() {
-    // --- 硬體初始化 ---
+    // --- 硬體初始化 (維持不變) ---
     RS485Comm comm("COM4", 1);
     if (!comm.openPort(19200)) {
         std::cerr << "[Fatal] Cannot open RS-485 port.\n";
@@ -15,110 +15,161 @@ int main() {
     
     ClawController claw(comm);
     
-    // 根據手冊，通電後應等待控制器完成內部初始化
     std::cout << "[Main] Waiting 3 seconds for controller to power up and stabilize...\n";
     std::this_thread::sleep_for(std::chrono::seconds(3));
     
     claw.initialize();
 
-    // --- YOLO 和攝影機初始化 ---
-    YoloDetector detector("yolov8n.onnx", "coco.names");
-    if (!detector.isLoaded()) { return -1; }
-    detector.start();
-    std::cout << "[Info] YOLOv8 detector thread started.\n";
-    cv::VideoCapture cap(0, cv::CAP_DSHOW);
-    if (!cap.isOpened()) { 
-        std::cerr << "[Fatal] Cannot open camera.\n";
-        return -1; 
-    }
-    std::cout << "[Info] Camera open successful.\n";
+    // --- 初始化寸動模式 ---
+    uint16_t current_inching_distance = 20;
+    uint16_t current_jog_speed = 20; // 預設速度為 20%
+    claw.setInchingDistance(current_inching_distance); 
+    claw.setJogSpeed(current_jog_speed);
 
     // --- 主迴圈 ---
     std::cout << "\n====================== INSTRUCTIONS ======================\n";
-    std::cout << "  - Press [Spacebar]: Toggle Servo ON / OFF\n";
-    std::cout << "  - Press [o] / [c]: START JOG move + / -\n";
-    std::cout << "  - Press [x]        : STOP JOG move\n";
-    std::cout << "  - Press [r]        : Clear All Faults (Max Count, Alarms, etc.)\n"; // <--- 更新說明
-    std::cout << "  - Press [s]        : Read current status\n";
-    std::cout << "  - Press [q] / [ESC]: Quit program\n";
+    std::cout << "          (Press a key to send a command)\n";
+    std::cout << "  [t] : Toggle Servo ON/OFF        [s] : Read current status\n";
+    std::cout << "  [d] : Set Inching Distance       [v] : Set Inching Speed\n"; // <--- 加入 'v'
+    std::cout << "  [o] : Inching Move +             [c] : Inching Move -\n";
+    std::cout << "  [r] : Clear All Faults           [q] : Quit program\n";
     std::cout << "========================================================\n\n";
     
-    // claw.readAndPrintStatus();
+    std::cout << "Initial status:" << std::endl;
+    claw.readAndPrintStatus();
+    std::cout << "\n> Current Inching Distance: " << current_inching_distance << " pulses." << std::endl;
+    std::cout << "Waiting for key press..." << std::endl;
 
-    // Changing part
-    size_t last_detection_count = 0;
-
-
-    while (true) {
-        cv::Mat frame;
-        cap >> frame;
-        if (frame.empty()) { continue; }
+    char key;
+    while ((key = _getch()) && key != 'q') {
         
-        detector.updateFrame(frame);
+        std::cout << "\n> Key '" << key << "' pressed." << std::endl;
 
-        std::vector<Detection> detections = detector.getDetections();
-        
-        if (detections.size() != last_detection_count) {
-            std::cout << "[Detector] Found " << detections.size() << " objects." << std::endl;
-            last_detection_count = detections.size();
-        }
-        for (const auto& det : detections) {
-            std::cout << "  > Drawing box: Class='" << det.class_name 
-            << "', Pos=(" << det.box.x << ", " << det.box.y 
-            << "), Size=(" << det.box.width << "x" << det.box.height << ")" << std::endl;
-            cv::rectangle(frame, det.box, cv::Scalar(0, 255, 0), 2);
-            std::string label = det.class_name + ": " + cv::format("%.2f", det.confidence);
-            cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
-        }
-        
-        cv::imshow("YOLOv8 Real-Time Detection", frame);
+        switch (key) {
+            case 't': // 切換 Servo 狀態 (維持不變)
+                if (claw.isActuallyOn()) {
+                    claw.servoOff();
+                } else {
+                    claw.servoOn();
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                claw.readAndPrintStatus();
+                break;
 
-        int key = cv::waitKey(1);
+            // ======================= 核心修正點 =======================
+            case 'd': { 
+                int distance = 0;
+                std::cout << "  > Enter new inching distance (e.g., 100, 1000) and press Enter: ";
+                std::cin >> distance;
 
-        if (key == 32) { // 空白鍵切換
-            // 直接根據真實狀態來決定執行 ON 還是 OFF
-            if (claw.isActuallyOn()) {
-                claw.servoOff();
-            } else {
-                claw.servoOn();
+                if (std::cin.fail() || distance < 1) {
+                    std::cin.clear();
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    std::cerr << "[Error] Invalid input. Please enter a positive number." << std::endl;
+                    break; 
+                }
+                
+                std::cout << "  > Applying new distance setting..." << std::endl;
+                
+                // 步驟 1: 記住 Servo 當前的狀態，以便之後恢復
+                bool was_on = claw.isActuallyOn();
+                
+                // 步驟 2: 如果伺服是 ON，為了安全地寫入參數，必須先將其關閉
+                if (was_on) {
+                    std::cout << "  > Cycling Servo OFF to unlock parameter..." << std::endl;
+                    claw.servoOff();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300)); // 等待 Servo 完全斷電
+                }
+                
+                // 步驟 3: 現在處於安全的 Servo OFF 狀態，設定新的距離
+                if (claw.setInchingDistance(distance)) {
+                    current_inching_distance = distance; // 指令成功，更新我們程式中的變數
+                    std::cout << "  > Inching distance set to " << current_inching_distance << " pulses successfully." << std::endl;
+                } else {
+                    std::cerr << "[Error] Failed to set new distance. Please check connection." << std::endl;
+                }
+
+                // 步驟 4: 如果伺服原本是 ON，則將其重新開啟，恢復原狀
+                if (was_on) {
+                    std::cout << "  > Cycling Servo ON to resume operation..." << std::endl;
+                    claw.servoOn();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                }
+                
+                // 步驟 5: 顯示最終的狀態
+                claw.readAndPrintStatus();
+                break;
             }
-        }
-        else if (key == 'o' || key == 'c') { // 開始 JOG
-            // 每次都重新獲取最真實的狀態
-            if (claw.isActuallyOn()) {
-                claw.jogStart(key == 'o'); // 'o' for positive, 'c' for negative
-            } else {
-                std::cout << "[Warning] Servo is OFF. Please press Spacebar to turn it ON first.\n";
+            // ==========================================================
+            case 'v': {
+                int speed = 0;
+                std::cout << "  > Enter new inching speed (1-100%) and press Enter: ";
+                std::cin >> speed;
+                if (std::cin.fail() || speed < 1 || speed > 100) {
+                     std::cin.clear();
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    std::cerr << "[Error] Invalid input. Please enter a number between 1 and 100." << std::endl;
+                    break;
+                }
+
+                // 套用與設定距離相同的安全流程
+                std::cout << "  > Applying new speed setting..." << std::endl;
+                bool was_on = claw.isActuallyOn();
+                if (was_on) {
+                    std::cout << "  > Cycling Servo OFF to unlock parameter..." << std::endl;
+                    claw.servoOff();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                }
+
+                if (claw.setJogSpeed(speed)) {
+                    current_jog_speed = speed;
+                    std::cout << "  > Inching speed set to " << current_jog_speed << "% successfully." << std::endl;
+                } else {
+                    std::cerr << "[Error] Failed to set new speed. Please check connection." << std::endl;
+                }
+                
+                if (was_on) {
+                    std::cout << "  > Cycling Servo ON to resume operation..." << std::endl;
+                    claw.servoOn();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                }
+                claw.readAndPrintStatus();
+                break;
             }
+            case 'o':
+            case 'c': // (寸動邏輯維持不變)
+                if (claw.isActuallyOn()) {
+                    claw.jogStart(key == 'o'); 
+                    claw.jogStop();
+                    std::cout << "  > Inching command '" << key << "' sent (Distance: " << current_inching_distance << " pulses)." << std::endl;
+                } else {
+                    std::cout << "[Warning] Servo is OFF. Please press 't' to turn it ON first.\n";
+                }
+                break;
+
+            case 'r': // (維持不變)
+                claw.clearAllFaults();
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                claw.readAndPrintStatus();
+                break;
+
+            case 's': // (維持不變)
+                claw.readAndPrintStatus(); 
+                break;
+            
+            default:
+                std::cout << "  > Unknown command." << std::endl;
+                break;
         }
-        else if (key == 'x') { // 停止 JOG
-            claw.jogStop();
-        }
-        else if (key == 'r') { // <--- 更新 r 鍵的行為
-            claw.clearAllFaults();
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            claw.readAndPrintStatus();
-        }
-        else if (key == 's') { // 狀態查詢
-             // 在讀取狀態前先發送停止指令，避免通訊阻塞
-            claw.jogStop(); 
-            std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 等待停止完成
-            claw.readAndPrintStatus();
-        }
-        if (key == 'q' || key == 27) {
-            break;
-        }
+        std::cout << "\n> Current Distance: " << current_inching_distance << " pulses | Current Speed: " << current_jog_speed << "%" << std::endl;
+        std::cout << "Waiting for key press..." << std::endl;
     }
 
-    // --- 程式結束前的清理 ---
-    detector.stop();
-    // 確保在退出前伺服是關閉的
+    // --- 程式結束前的清理 (維持不變) ---
     if (claw.isActuallyOn()) {
-        claw.jogStop(); // 先停止任何可能的移動
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
         claw.servoOff(); 
     }
-    std::cout << "[Info] Program finished.\n";
+    std::cout << "\n[Info] Program finished.\n";
     
     return 0;
 }

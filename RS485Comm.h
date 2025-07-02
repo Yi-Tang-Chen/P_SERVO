@@ -13,8 +13,11 @@ public:
     bool openPort(int baudrate = 19200);
     void closePort();
 
-    bool writeRegister(uint16_t reg_addr, uint16_t value);
+    bool writeParameter(uint16_t reg_addr, uint16_t value);
+    bool executeAction(uint16_t reg_addr, uint16_t value);
+
     bool readRegister(uint16_t reg_addr, uint16_t& value);
+    bool readMultipleRegisters(uint16_t start_addr, uint16_t count, std::vector<uint16_t>& dest);
 
 private:
     void* hComm_;

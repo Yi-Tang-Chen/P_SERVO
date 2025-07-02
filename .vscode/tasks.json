@@ -7,20 +7,19 @@
             "command": "C:/msys64/ucrt64/bin/g++.exe",
             "args": [
                 "-g",
-                // --- 這是唯一的修改點 ---
                 // 不再使用 ${file}，而是列出所有要編譯的 .cpp 檔案
                 "camera.cpp",
                 "RS485Comm.cpp",
                 "clawcontroller.cpp",
-                "YoloDetector.cpp",
+                // "YoloDetector.cpp",
                 // ------------------------
                 "-o",
-                "final_project.exe", // 輸出的執行檔名稱
-                "-I", // 以下 OpenCV 的設定完全保留
-                "C:/CPP/opencv/build-mingw/install/include",
-                "-L",
-                "C:/CPP/opencv/build-mingw/install/x64/mingw/lib",
-                "-lopencv_world4110"
+                "final_project.exe",
+                // "-I",
+                // "C:/CPP/opencv/opencv-install/include",
+                // "-L",
+                // "C:/CPP/opencv/opencv-install/x64/mingw/lib",
+                // "-lopencv_world4110"
             ],
             "options": {
                 "cwd": "${fileDirname}"

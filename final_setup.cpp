@@ -44,11 +44,11 @@ int main() {
         switch (key) {
             case '1': // 行為修正
                 std::cout << "\nSending TRUE Servo ON (writing 1 to 0x2011)..." << std::endl;
-                comm.writeRegister(0x2011, 1);
+                comm.executeAction(0x2011, 1);
                 break;
             case '0': // 行為修正
                 std::cout << "\nSending TRUE Servo OFF (writing 0 to 0x2011)..." << std::endl;
-                comm.writeRegister(0x2011, 0);
+                comm.executeAction(0x2011, 0);
                 break;
             case 's':
                  std::cout << "\nReading current status..." << std::endl;

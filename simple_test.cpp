@@ -51,19 +51,19 @@ int main() {
         switch (key) {
             case '1':
                 std::cout << "\nSending Servo ON..." << std::endl;
-                success = comm.writeRegister(0x2011, 0); // 直接 Servo ON 指令
+                success = comm.executeAction(0x2011, 0); // 直接 Servo ON 指令
                 break;
             case '0':
                 std::cout << "\nSending Servo OFF..." << std::endl;
-                success = comm.writeRegister(0x2011, 1); // 直接 Servo OFF 指令
+                success = comm.executeAction(0x2011, 1); // 直接 Servo OFF 指令
                 break;
             case 'r':
                 std::cout << "\nSending Alarm Reset..." << std::endl;
-                success = comm.writeRegister(0x201E, 7); // 動作執行：重置警報
+                success = comm.executeAction(0x201E, 7); // 動作執行：重置警報
                 break;
             case 'c':
                 std::cout << "\nSending Clear Deviation Counter..." << std::endl;
-                success = comm.writeRegister(0x201E, 8); // 動作執行：清除偏差計數
+                success = comm.executeAction(0x201E, 8); // 動作執行：清除偏差計數
                 break;
             case 's':
                  std::cout << "\nReading current status..." << std::endl;
