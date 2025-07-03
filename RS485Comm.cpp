@@ -128,6 +128,48 @@ bool RS485Comm::writeParameter(uint16_t reg_addr, uint16_t value) {
     return response.find(frame.substr(0, frame.length() - 4)) != std::string::npos;
 }
 
+bool RS485Comm::writeParameter32(uint16_t reg_addr, uint32_t value) {
+    std::vector<uint8_t> data_rtu;
+    data_rtu.push_back(slave_id_);
+    data_rtu.push_back(0x10); // 功能碼 10H: 寫入多個暫存器
+    data_rtu.push_back(reg_addr >> 8);
+    data_rtu.push_back(reg_addr & 0xFF);
+    data_rtu.push_back(0x00); // 寫入數量高位 (2 個)
+    data_rtu.push_back(0x02); // 寫入數量低位 (2 個)
+    data_rtu.push_back(0x04); // 寫入位元組數 (4 bytes)
+
+    // 將 32 位元值拆分成兩個 16 位元值
+    // 根據手冊 A06H，預設是大端序 (Big Endian)
+    uint16_t high_word = value >> 16;
+    uint16_t low_word = value & 0xFFFF;
+
+    // 寫入高位 Word
+    data_rtu.push_back(high_word >> 8);
+    data_rtu.push_back(high_word & 0xFF);
+    // 寫入低位 Word
+    data_rtu.push_back(low_word >> 8);
+    data_rtu.push_back(low_word & 0xFF);
+
+    uint8_t lrc = calcLRC(data_rtu);
+
+    std::string frame = ":";
+    for(uint8_t byte : data_rtu) {
+        frame += byteToAscii(byte);
+    }
+    frame += byteToAscii(lrc);
+    frame += "\r\n";
+
+    PurgeComm(hComm_, PURGE_RXCLEAR);
+    if (!sendFrame(frame)) return false;
+    std::string response;
+    if (!recvFrame(response)) return false;
+
+    // 成功的正常回應會是我們發送內容的回聲 (部分)
+    // :011020020002...
+    std::string expected_response_prefix = ":" + byteToAscii(slave_id_) + "10" + byteToAscii(reg_addr >> 8) + byteToAscii(reg_addr & 0xFF);
+    return response.rfind(expected_response_prefix, 0) == 0;
+}
+
 // 專門用於「執行動作」，使用功能碼 10H
 bool RS485Comm::executeAction(uint16_t reg_addr, uint16_t value) {
     std::vector<uint8_t> data_rtu;
@@ -219,6 +261,7 @@ bool RS485Comm::readRegister(uint16_t reg_addr, uint16_t& value) {
     return false;
 }
 
+
 bool RS485Comm::readMultipleRegisters(uint16_t start_addr, uint16_t count, std::vector<uint16_t>& dest) {
     if (count == 0 || count > 125) return false; // Modbus 限制
 
@@ -278,3 +321,16 @@ bool RS485Comm::readMultipleRegisters(uint16_t start_addr, uint16_t count, std::
     return true;
 }
 
+bool RS485Comm::readRegister32(uint16_t reg_addr, uint32_t& value) {
+    std::vector<uint16_t> dest;
+    // 使用 readMultipleRegisters 一次讀取 2 個連續的 16 位元暫存器
+    if (readMultipleRegisters(reg_addr, 2, dest) && dest.size() == 2) {
+        // 根據手冊 A06H，預設是大端序 (Big Endian)，高位在前
+        uint16_t high_word = dest[0];
+        uint16_t low_word = dest[1];
+        // 將兩個 16 位元合併成一個 32 位元
+        value = (static_cast<uint32_t>(high_word) << 16) | low_word;
+        return true;
+    }
+    return false;
+}

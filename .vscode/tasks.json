@@ -3,26 +3,21 @@
     "tasks": [
         {
             "type": "cppbuild",
-            "label": "Build All C++ Files", // 我改了標籤，讓它更明確
+            "label": "Build Project (final_project.exe)",
             "command": "C:/msys64/ucrt64/bin/g++.exe",
             "args": [
                 "-g",
-                // 不再使用 ${file}，而是列出所有要編譯的 .cpp 檔案
+                // 列出所有主程式需要的 .cpp 檔案
                 "camera.cpp",
                 "RS485Comm.cpp",
                 "clawcontroller.cpp",
-                // "YoloDetector.cpp",
-                // ------------------------
+                // 輸出的執行檔名稱
                 "-o",
-                "final_project.exe",
-                // "-I",
-                // "C:/CPP/opencv/opencv-install/include",
-                // "-L",
-                // "C:/CPP/opencv/opencv-install/x64/mingw/lib",
-                // "-lopencv_world4110"
+                "final_project.exe"
             ],
             "options": {
-                "cwd": "${fileDirname}"
+                // 使用 ${workspaceFolder} 可以確保總是在專案的根目錄下執行編譯
+                "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [
                 "$gcc"
@@ -31,7 +26,7 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "compiler: C:/msys64/ucrt64/bin/g++.exe"
+            "detail": "Builds the main all-in-one P-SERVO controller program."
         }
     ]
 }

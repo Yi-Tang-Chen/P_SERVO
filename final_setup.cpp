@@ -1,67 +1,36 @@
+// final_setup.cpp
 #include <iostream>
-#include <string>
 #include <thread>
 #include <chrono>
-#include "RS485Comm.h" // 請確保 RS485Comm.cpp 是使用 10H 功能碼的版本
+#include "RS485Comm.h"
 
-// 函式：讀取並打印狀態
-void readAndPrintStatus(RS485Comm& comm) {
-    uint16_t motion, alarm, servo, error;
-    comm.readRegister(0x1000, motion);
-    comm.readRegister(0x1005, alarm);
-    comm.readRegister(0x1022, servo);
-    comm.readRegister(0x1023, error);
-    std::cout << "[Status] Motion: " << (motion == 0 ? "Stopped" : (motion == 1 ? "Moving" : "Alarm Stop"))
-              << " | Alarm: " << (alarm == 0 ? "No Alarm" : "ALARM")
-              << " | Servo: " << (servo == 0 ? "ON" : "OFF")
-              << " | Error: " << (error == 1 ? "Busy Error" : (error == 0 ? "No Error" : "ERROR"))
-              << std::endl;
-}
+static constexpr uint16_t REG_HIGH_SPEED = 0x0802;
+static constexpr uint16_t REG_JOG_INCHING_DATA = 0x0810;
 
 int main() {
     RS485Comm comm("COM4", 1);
-    if (!comm.openPort(19200)) {
-        std::cerr << "[Fatal] Cannot open RS-485 port." << std::endl;
-        return -1;
-    }
+    if (!comm.openPort(19200)) { /* ... */ return -1; }
 
-    std::cout << "====================================================\n";
-    std::cout << "        The TRUE Logic P-SERVO Control Test\n";
-    std::cout << "====================================================\n\n";
+    std::cout << "P-SERVO One-Time 32-bit Parameter Setup\n";
+
+    uint32_t desired_speed = 80000;
+    std::cout << "[1] Setting HighSpeed (0x0802) to " << desired_speed << " pps..." << std::endl;
+    if (comm.writeParameter32(REG_HIGH_SPEED, desired_speed)) {
+        std::cout << "  > Write command sent successfully." << std::endl;
+    } else {
+        std::cerr << "  > Failed to send write command for HighSpeed." << std::endl;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    uint32_t desired_distance = 500;
+    std::cout << "\n[2] Setting JogInchingData (0x0810) to " << desired_distance << " pulses..." << std::endl;
+    if (comm.writeParameter32(REG_JOG_INCHING_DATA, desired_distance)) {
+        std::cout << "  > Write command sent successfully." << std::endl;
+    } else {
+        std::cerr << "  > Failed to send write command for JogInchingData." << std::endl;
+    }
     
-    std::cout << "Initial Status on connect:" << std::endl;
-    readAndPrintStatus(comm);
-    std::cout << "----------------------------------------------------\n";
-    std::cout << "Instructions (Reflecting TRUE discovered logic):\n";
-    std::cout << "  1 : SERVO ON  (Writes 1 to 0x2011)\n"; // 說明修正
-    std::cout << "  0 : SERVO OFF (Writes 0 to 0x2011)\n"; // 說明修正
-    std::cout << "  s : Read Status.\n";
-    std::cout << "  q : Quit.\n";
-    std::cout << "----------------------------------------------------\n";
-
-    char key;
-    while (std::cin >> key && key != 'q') {
-        switch (key) {
-            case '1': // 行為修正
-                std::cout << "\nSending TRUE Servo ON (writing 1 to 0x2011)..." << std::endl;
-                comm.executeAction(0x2011, 1);
-                break;
-            case '0': // 行為修正
-                std::cout << "\nSending TRUE Servo OFF (writing 0 to 0x2011)..." << std::endl;
-                comm.executeAction(0x2011, 0);
-                break;
-            case 's':
-                 std::cout << "\nReading current status..." << std::endl;
-                 break;
-            default:
-                std::cout << "Unknown command." << std::endl;
-                continue;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        readAndPrintStatus(comm);
-    }
-
-    std::cout << "\nProgram finished." << std::endl;
+    std::cout << "\n\nSetup complete. Please POWER CYCLE the P-SERVO controller now." << std::endl;
     comm.closePort();
     return 0;
 }

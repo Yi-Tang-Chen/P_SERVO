@@ -15,8 +15,9 @@ public:
 
     bool writeParameter(uint16_t reg_addr, uint16_t value);
     bool executeAction(uint16_t reg_addr, uint16_t value);
-
+    bool writeParameter32(uint16_t reg_addr, uint32_t value);
     bool readRegister(uint16_t reg_addr, uint16_t& value);
+    bool readRegister32(uint16_t reg_addr, uint32_t& value);
     bool readMultipleRegisters(uint16_t start_addr, uint16_t count, std::vector<uint16_t>& dest);
 
 private:

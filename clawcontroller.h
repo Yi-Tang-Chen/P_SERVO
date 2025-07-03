@@ -27,14 +27,18 @@ public:
     void resetAlarm();
     void clearAllFaults();
 
-    bool setJogSpeed(uint16_t speed_percent);
-    bool setInchingDistance(uint16_t distance_pulse);
+    bool setJogSpeed(uint32_t speed_percent);
+    uint16_t getJogSpeedSetting();
+    bool setInchingDistance(uint32_t distance_pulse);
+    uint32_t getInchingDistanceSetting();
+    uint32_t getHighSpeedSetting();
 
 private:
     RS485Comm& comm_;
 
     // 暫存器位址定義
     static constexpr uint16_t REG_PSEUDO_IN1 = 0x2016;      // **關鍵：偽通訊埠IN1**
+    static constexpr uint16_t REG_CONTROL_MODE = 0x0502;
     static constexpr uint16_t REG_RELATIVE_POS_DATA = 0x2000;
     static constexpr uint16_t REG_ACTION_EXECUTE = 0x201E;
     static constexpr uint16_t REG_SERVO_STATUS = 0x1022;
@@ -43,6 +47,7 @@ private:
     static constexpr uint16_t REG_ERROR_STATUS = 0x1023;
 
     static constexpr uint16_t REG_JOG_SPEED = 0x080F;
+    static constexpr uint16_t REG_HIGH_SPEED = 0x0802; 
     static constexpr uint16_t REG_JOG_INCHING_DATA = 0x0810;
 
     // 動作指令碼
