@@ -1,61 +1,112 @@
 #include "RS485Comm.h"
-#include <windows.h>
 #include <iostream>
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <cstring>      // For strerror
+#include <cerrno>       // For errno
+
+// --- Linux Headers for Serial Communication ---
+#include <fcntl.h>      // Contains file controls like O_RDWR
+#include <termios.h>    // Contains POSIX terminal control definitions
+#include <unistd.h>     // write(), read(), close()
 
 RS485Comm::RS485Comm(const std::string& device, uint8_t slave_id)
-: hComm_(INVALID_HANDLE_VALUE), slave_id_(slave_id), device_name_(device) {}
+: hComm_((void*)-1), slave_id_(slave_id), device_name_(device) {}
 
 RS485Comm::~RS485Comm() {
     closePort();
 }
 
-bool RS485Comm::openPort(int baudrate) {
-    std::string full_device_name = "\\\\.\\" + device_name_;
-    hComm_ = CreateFileA(full_device_name.c_str(),
-                        GENERIC_READ | GENERIC_WRITE,
-                        0, NULL, OPEN_EXISTING, 0, NULL);
+bool RS485Comm::openPort(int baudrate_val) {
+    // In Linux, serial ports are treated like files. O_RDWR means open for reading and writing.
+    // O_NOCTTY means not to make this port the controlling terminal.
+    int serial_port = open(device_name_.c_str(), O_RDWR | O_NOCTTY);
 
-    if (hComm_ == INVALID_HANDLE_VALUE) return false;
-
-    DCB dcbSerialParams = {0};
-    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
-    if (!GetCommState(hComm_, &dcbSerialParams)) {
-        closePort();
+    if (serial_port < 0) {
+        std::cerr << "Error " << errno << " from open: " << strerror(errno) << std::endl;
         return false;
     }
-    
-    dcbSerialParams.BaudRate = baudrate;
-    dcbSerialParams.ByteSize = 8;
-    dcbSerialParams.StopBits = ONESTOPBIT;
-    dcbSerialParams.Parity   = NOPARITY;
-    if(!SetCommState(hComm_, &dcbSerialParams)){
+
+    hComm_ = (void*)(intptr_t)serial_port;
+
+    struct termios tty;
+    if(tcgetattr(serial_port, &tty) != 0) {
+        std::cerr << "Error " << errno << " from tcgetattr: " << strerror(errno) << std::endl;
         closePort();
         return false;
     }
 
-    COMMTIMEOUTS timeouts = {0};
-    timeouts.ReadIntervalTimeout         = 200;
-    timeouts.ReadTotalTimeoutConstant    = 500;
-    timeouts.ReadTotalTimeoutMultiplier  = 50;
-    timeouts.WriteTotalTimeoutConstant   = 500;
-    timeouts.WriteTotalTimeoutMultiplier = 50;
-    if(!SetCommTimeouts(hComm_, &timeouts)){
+    // --- Set Port Parameters ---
+    tty.c_cflag &= ~PARENB; // Clear parity bit, disabling parity (most common)
+    tty.c_cflag &= ~CSTOPB; // Clear stop field, only one stop bit used in communication (most common)
+    tty.c_cflag |= CS8;     // 8 bits per byte (most common)
+    tty.c_cflag &= ~CRTSCTS; // Disable RTS/CTS hardware flow control (most common)
+    tty.c_cflag |= CREAD | CLOCAL; // Turn on READ & ignore ctrl lines (CLOCAL = 1)
+
+    tty.c_lflag &= ~ICANON; // Disable canonical mode
+    tty.c_lflag &= ~ECHO;   // Disable echo
+    tty.c_lflag &= ~ECHOE;  // Disable erasure
+    tty.c_lflag &= ~ECHONL; // Disable new-line echo
+    tty.c_lflag &= ~ISIG;   // Disable interpretation of INTR, QUIT and SUSP
+
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // Turn off s/w flow ctrl
+    tty.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL); // Disable special handling of received bytes
+
+    tty.c_oflag &= ~OPOST; // Prevent special interpretation of output bytes (e.g. newline chars)
+    tty.c_oflag &= ~ONLCR; // Prevent conversion of newline to carriage return/line feed
+
+    // Set read timeouts. VMIN = 0, VTIME = 5 means it will wait up to 0.5 seconds for data.
+    tty.c_cc[VTIME] = 5;
+    tty.c_cc[VMIN] = 0;
+
+    // --- Set Baud Rate ---
+    speed_t baud_rate_flag;
+    switch (baudrate_val) {
+        case 9600:   baud_rate_flag = B9600;   break;
+        case 19200:  baud_rate_flag = B19200;  break;
+        case 38400:  baud_rate_flag = B38400;  break;
+        case 115200: baud_rate_flag = B115200; break;
+        default:     baud_rate_flag = B19200;  break;
+    }
+    cfsetispeed(&tty, baud_rate_flag);
+    cfsetospeed(&tty, baud_rate_flag);
+
+    // Save tty settings, also checking for error
+    if (tcsetattr(serial_port, TCSANOW, &tty) != 0) {
+        std::cerr << "Error " << errno << " from tcsetattr: " << strerror(errno) << std::endl;
         closePort();
         return false;
     }
 
-    PurgeComm(hComm_, PURGE_TXCLEAR | PURGE_RXCLEAR);
+    tcflush(serial_port, TCIOFLUSH); // Flush buffer
     return true;
 }
 
 void RS485Comm::closePort() {
-    if (hComm_ != INVALID_HANDLE_VALUE) {
-        CloseHandle(hComm_);
-        hComm_ = INVALID_HANDLE_VALUE;
+    if ((intptr_t)hComm_ != -1) {
+        close((intptr_t)hComm_);
+        hComm_ = (void*)-1;
     }
+}
+
+bool RS485Comm::sendFrame(const std::string& frame) {
+    int serial_port = (intptr_t)hComm_;
+    if (serial_port < 0) return false;
+    ssize_t bytes_written = write(serial_port, frame.c_str(), frame.length());
+    return bytes_written == frame.length();
+}
+
+bool RS485Comm::recvFrame(std::string& response) {
+    int serial_port = (intptr_t)hComm_;
+    if (serial_port < 0) return false;
+    char buf[256] = {0};
+    ssize_t bytes_read = read(serial_port, buf, sizeof(buf) - 1);
+    if (bytes_read > 0) {
+        response.assign(buf, bytes_read);
+        return true;
+    }
+    return false;
 }
 
 
@@ -80,25 +131,6 @@ std::string RS485Comm::byteToAscii(uint8_t byte) {
 uint8_t RS485Comm::asciiToByte(const char* ascii) {
     char hex[3] = { ascii[0], ascii[1], '\0' };
     return (uint8_t)std::stoul(hex, nullptr, 16);
-}
-
-// sendFrame 和 recvFrame 現在處理 string
-bool RS485Comm::sendFrame(const std::string& frame) {
-    DWORD bytesWritten;
-    if (!WriteFile(hComm_, frame.c_str(), frame.length(), &bytesWritten, NULL)) {
-        return false;
-    }
-    return bytesWritten == frame.length();
-}
-
-bool RS485Comm::recvFrame(std::string& response) {
-    char buf[256] = {0}; // 接收緩衝區
-    DWORD bytesRead;
-    if (ReadFile(hComm_, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
-        response.assign(buf, bytesRead);
-        return true;
-    }
-    return false;
 }
 
 bool RS485Comm::writeParameter(uint16_t reg_addr, uint16_t value) {

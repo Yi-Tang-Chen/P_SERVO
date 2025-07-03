@@ -32,6 +32,8 @@ public:
     bool setInchingDistance(uint32_t distance_pulse);
     uint32_t getInchingDistanceSetting();
     uint32_t getHighSpeedSetting();
+    std::string getStatusString();
+    std::string getSettingsString();
 
 private:
     RS485Comm& comm_;

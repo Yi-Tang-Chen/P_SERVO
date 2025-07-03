@@ -1,4 +1,5 @@
 #include "clawcontroller.h"
+#include <string>
 
 ClawController::ClawController(RS485Comm& comm) : comm_(comm) {}
 
@@ -87,4 +88,20 @@ void ClawController::readAndPrintStatus() {
     uint32_t speed = getHighSpeedSetting();
     uint32_t dist = getInchingDistanceSetting();
     std::cout << "[Settings] HighSpeed: " << speed << " pps | Distance: " << dist << " pulses" << std::endl;
+}
+
+std::string ClawController::getStatusString() {
+    // ... 從 readAndPrintStatus 搬移過來的邏輯 ...
+    uint16_t motion, alarm, error;
+    // ... 讀取暫存器 ...
+    return "Motion: " + std::string(motion == 0 ? "Stopped" : "Moving/Alarm") + 
+           " | Alarm: " + std::string(alarm == 0 ? "No Alarm" : "ALARM") +
+           " | Servo: " + std::string(isActuallyOn() ? "ON" : "OFF") +
+           " | Error: " + std::string(error == 0 ? "No Error" : "ERROR");
+}
+
+std::string ClawController::getSettingsString() {
+    uint32_t speed = getHighSpeedSetting();
+    uint32_t dist = getInchingDistanceSetting();
+    return "HighSpeed: " + std::to_string(speed) + " pps | Distance: " + std::to_string(dist) + " pulses";
 }

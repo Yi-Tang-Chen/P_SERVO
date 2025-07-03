@@ -2,21 +2,20 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "type": "cppbuild",
-            "label": "Build Project (final_project.exe)",
-            "command": "C:/msys64/ucrt64/bin/g++.exe",
+            "type": "shell",
+            "label": "Build P-SERVO Project (Ubuntu)",
+            "command": "/usr/bin/g++",
             "args": [
                 "-g",
-                // 列出所有主程式需要的 .cpp 檔案
+                // 所有需要編譯的 .cpp 檔案
                 "camera.cpp",
                 "RS485Comm.cpp",
                 "clawcontroller.cpp",
-                // 輸出的執行檔名稱
                 "-o",
-                "final_project.exe"
+                "final_project", // 在 Linux 上，執行檔通常沒有 .exe 副檔名
+                "-lncurses"      // !!! 重要：連結 ncurses 函式庫
             ],
             "options": {
-                // 使用 ${workspaceFolder} 可以確保總是在專案的根目錄下執行編譯
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [
@@ -26,7 +25,7 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "Builds the main all-in-one P-SERVO controller program."
+            "detail": "Compiler: /usr/bin/g++"
         }
     ]
 }
