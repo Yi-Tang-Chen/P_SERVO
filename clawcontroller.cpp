@@ -5,7 +5,16 @@
 
 ClawController::ClawController(RS485Comm& comm) : comm_(comm) {}
 
-void ClawController::initialize() {}
+void ClawController::initialize() {
+    // Set a fast acceleration time on startup
+    std::cout << "[Setup] Setting optimal acceleration time..." << std::endl;
+    if (comm_.writeParameter32(0x0804, 10)) { // 0x0804 is AccelTime
+        std::cout << "[Setup] Acceleration time set successfully." << std::endl;
+    } else {
+        std::cerr << "[Setup] Warning: Failed to set acceleration time." << std::endl;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
 
 bool ClawController::servoOn() { return comm_.executeAction(0x2011, 0); } 
 bool ClawController::servoOff() { return comm_.executeAction(0x2011, 1); }
@@ -17,20 +26,10 @@ bool ClawController::setHighSpeed(uint32_t speed_pps) {
     return comm_.writeParameter32(REG_HIGH_SPEED, speed_pps);
 }
 
-bool ClawController::setInchingDistance(uint32_t distance_pulse) {
-    return comm_.writeParameter32(REG_JOG_INCHING_DATA, distance_pulse);
-}
-
 uint32_t ClawController::getHighSpeedSetting() {
     uint32_t speed = 0;
     comm_.readRegister32(REG_HIGH_SPEED, speed);
     return speed;
-}
-
-uint32_t ClawController::getInchingDistanceSetting() {
-    uint32_t dist = 0;
-    comm_.readRegister32(REG_JOG_INCHING_DATA, dist);
-    return dist;
 }
 
 void ClawController::clearAllFaults() {
@@ -56,6 +55,5 @@ void ClawController::readAndPrintStatus() {
               << " | Servo: " << servo_str << " | Error: " << error_str << std::endl;
 
     uint32_t speed = getHighSpeedSetting();
-    uint32_t dist = getInchingDistanceSetting();
-    std::cout << "[Settings] HighSpeed: " << speed << " pps | Distance: " << dist << " pulses" << std::endl;
+    std::cout << "[Settings] HighSpeed: " << speed << " pps" << std::endl;
 }

@@ -13,32 +13,30 @@ public:
     bool servoOn();
     bool servoOff();
     void jogStart(bool positive);
-    void jogStop();
+    void jogStop(); // We still need this function
     bool isActuallyOn();
     void clearAllFaults();
 
-    // Functions to set parameters
+    // We only need to set the speed
     bool setHighSpeed(uint32_t speed_pps);
-    bool setInchingDistance(uint32_t distance_pulse);
 
-    // This is the single, public function for printing status
+    // This function now prints the status
     void readAndPrintStatus();
 
 private:
-    // Helper functions to get raw data
     uint32_t getHighSpeedSetting();
-    uint32_t getInchingDistanceSetting();
 
     RS485Comm& comm_;
 
-    // Register and command definitions
+    // Register definitions
     static constexpr uint16_t REG_ACTION_EXECUTE = 0x201E;
     static constexpr uint16_t REG_SERVO_STATUS = 0x1022;
     static constexpr uint16_t REG_MOTION_STATUS = 0x1000;
     static constexpr uint16_t REG_ALARM_STATUS = 0x1005;
     static constexpr uint16_t REG_ERROR_STATUS = 0x1023;
     static constexpr uint16_t REG_HIGH_SPEED = 0x0802; 
-    static constexpr uint16_t REG_JOG_INCHING_DATA = 0x0810;
+    
+    // Command definitions
     static constexpr uint16_t CMD_ALARM_RESET = 7;
     static constexpr uint16_t CMD_CLEAR_DEVIATION = 8;
 };
